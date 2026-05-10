@@ -3,10 +3,9 @@ import type { AppConfig } from "../src/config.js";
 import type {
   CodexAccountClient,
   CodexAccountState,
-  CodexRunner,
-  CodexTaskResult,
   DeviceCodeLogin
 } from "../src/codex/client.js";
+import type { TaskRunner, TaskRunResult } from "../src/provider/task-runner.js";
 
 const smokeRepo = {
   id: "local-agent-gateway",
@@ -28,8 +27,8 @@ const config: AppConfig = {
   BOOTSTRAP_ADMIN_TOKEN: "smoke-bootstrap-token"
 };
 
-class SmokeCodexRunner implements CodexRunner {
-  async runTask(): Promise<CodexTaskResult> {
+class SmokeTaskRunner implements TaskRunner {
+  async runTask(): Promise<TaskRunResult> {
     return {
       provider: "codex",
       backend: "app-server",
@@ -90,7 +89,7 @@ async function main(): Promise<void> {
   const { buildApp } = await import("../src/app.js");
   const app = buildApp({
     config,
-    codexRunner: new SmokeCodexRunner(),
+    taskRunner: new SmokeTaskRunner(),
     codexAccountClient: new SmokeCodexAccountClient()
   });
 

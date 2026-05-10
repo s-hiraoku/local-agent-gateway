@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { FastifyInstance } from "fastify";
-import { authHeader, FakeCodexRunner, issueToken, makeTestApp } from "./helpers.js";
+import { authHeader, FakeTaskRunner, issueToken, makeTestApp } from "./helpers.js";
 
 async function waitForTask(app: FastifyInstance, token: string, taskId: string) {
   for (let attempt = 0; attempt < 20; attempt += 1) {
@@ -20,8 +20,8 @@ async function waitForTask(app: FastifyInstance, token: string, taskId: string) 
 
 describe("tasks", () => {
   it("accepts a read-only task and completes it in the background", async () => {
-    const runner = new FakeCodexRunner();
-    const { app, db } = makeTestApp({ codexRunner: runner });
+    const runner = new FakeTaskRunner();
+    const { app, db } = makeTestApp({ taskRunner: runner });
     const token = issueToken(db, ["task:create", "task:read", "repo:local-agent-gateway", "mode:read-only"]);
 
     const response = await app.inject({
@@ -104,10 +104,10 @@ describe("tasks", () => {
   });
 
   it("does not include local absolute paths in task responses", async () => {
-    const runner = new FakeCodexRunner();
+    const runner = new FakeTaskRunner();
     runner.summary =
       "Read /Users/name/project/README.md, /home/runner/work/repo/file.ts, /workspace/app/secret, C:\\Users\\name\\secret.txt, \\\\server\\share\\secret.txt, and /tmp/project/secret";
-    const { app, db } = makeTestApp({ codexRunner: runner });
+    const { app, db } = makeTestApp({ taskRunner: runner });
     const token = issueToken(db, ["task:create", "task:read", "repo:local-agent-gateway", "mode:read-only"]);
 
     const response = await app.inject({
@@ -133,9 +133,9 @@ describe("tasks", () => {
   });
 
   it("marks background task failures without leaking runner details through create", async () => {
-    const runner = new FakeCodexRunner();
+    const runner = new FakeTaskRunner();
     runner.error = new Error("failed at /Users/name/project/secret.txt");
-    const { app, db } = makeTestApp({ codexRunner: runner });
+    const { app, db } = makeTestApp({ taskRunner: runner });
     const token = issueToken(db, ["task:create", "task:read", "repo:local-agent-gateway", "mode:read-only"]);
 
     const response = await app.inject({
@@ -212,9 +212,9 @@ describe("tasks", () => {
   });
 
   it("records append-only task lifecycle events", async () => {
-    const runner = new FakeCodexRunner();
+    const runner = new FakeTaskRunner();
     runner.changedFiles = ["README.md"];
-    const { app, db } = makeTestApp({ codexRunner: runner });
+    const { app, db } = makeTestApp({ taskRunner: runner });
     const token = issueToken(db, ["task:create", "task:read", "repo:local-agent-gateway", "mode:workspace-write"]);
 
     const response = await app.inject({
@@ -247,9 +247,9 @@ describe("tasks", () => {
   });
 
   it("records failed task events with sanitized public payloads", async () => {
-    const runner = new FakeCodexRunner();
+    const runner = new FakeTaskRunner();
     runner.error = new Error("failed in /Users/name/project/secret.txt");
-    const { app, db } = makeTestApp({ codexRunner: runner });
+    const { app, db } = makeTestApp({ taskRunner: runner });
     const token = issueToken(db, ["task:create", "task:read", "repo:local-agent-gateway", "mode:read-only"]);
 
     const response = await app.inject({
@@ -276,9 +276,9 @@ describe("tasks", () => {
   });
 
   it("replays task events as authorized SSE without internal ids or raw cwd", async () => {
-    const runner = new FakeCodexRunner();
+    const runner = new FakeTaskRunner();
     runner.summary = "Read /Volumes/SSD/secret/repo/file.ts";
-    const { app, db } = makeTestApp({ codexRunner: runner });
+    const { app, db } = makeTestApp({ taskRunner: runner });
     const token = issueToken(db, ["task:create", "task:read", "repo:local-agent-gateway", "mode:read-only"]);
 
     const created = await app.inject({
@@ -382,9 +382,9 @@ describe("tasks", () => {
   });
 
   it("returns an authorized task diff artifact without internal ids or raw cwd", async () => {
-    const runner = new FakeCodexRunner();
+    const runner = new FakeTaskRunner();
     runner.changedFiles = ["README.md", "/Users/name/project/secret.txt", "../outside.txt"];
-    const { app, db } = makeTestApp({ codexRunner: runner });
+    const { app, db } = makeTestApp({ taskRunner: runner });
     const token = issueToken(db, ["task:create", "task:read", "repo:local-agent-gateway", "mode:workspace-write"]);
 
     const created = await app.inject({
@@ -426,9 +426,9 @@ describe("tasks", () => {
   });
 
   it("treats diff artifact changed files as literal paths", async () => {
-    const runner = new FakeCodexRunner();
+    const runner = new FakeTaskRunner();
     runner.changedFiles = [":(glob)**/*.ts"];
-    const { app, db } = makeTestApp({ codexRunner: runner });
+    const { app, db } = makeTestApp({ taskRunner: runner });
     const token = issueToken(db, ["task:create", "task:read", "repo:local-agent-gateway", "mode:workspace-write"]);
 
     const created = await app.inject({
@@ -460,9 +460,9 @@ describe("tasks", () => {
   });
 
   it("serves stored diff artifacts instead of reading the live task row at request time", async () => {
-    const runner = new FakeCodexRunner();
+    const runner = new FakeTaskRunner();
     runner.changedFiles = ["README.md"];
-    const { app, db } = makeTestApp({ codexRunner: runner });
+    const { app, db } = makeTestApp({ taskRunner: runner });
     const token = issueToken(db, ["task:create", "task:read", "repo:local-agent-gateway", "mode:workspace-write"]);
 
     const created = await app.inject({

@@ -4,7 +4,8 @@ import type { AppConfig } from "./config.js";
 import type { Db } from "./db/connection.js";
 import { openDatabase } from "./db/connection.js";
 import { migrate } from "./db/migrate.js";
-import { CodexClient, type CodexAccountClient, type CodexRunner } from "./codex/client.js";
+import { CodexClient, type CodexAccountClient } from "./codex/client.js";
+import type { TaskRunner } from "./provider/task-runner.js";
 import { authMiddleware } from "./auth/middleware.js";
 import { writeAuditLog } from "./audit/audit-log.js";
 import { ApiError, installErrorHandler } from "./utils/errors.js";
@@ -17,7 +18,8 @@ import { codexAccountRoutes } from "./routes/codex-account.js";
 export type AppDeps = {
   config: AppConfig;
   db?: Db;
-  codexRunner?: CodexRunner;
+  taskRunner?: TaskRunner;
+  codexRunner?: TaskRunner;
   codexAccountClient?: CodexAccountClient;
 };
 
@@ -33,8 +35,9 @@ export function buildApp(deps: AppDeps) {
       }
     }
   });
-  const defaultCodex = deps.codexRunner && deps.codexAccountClient ? null : new CodexClient(deps.config);
-  const codexRunner = deps.codexRunner ?? (defaultCodex as CodexClient);
+  const providedTaskRunner = deps.taskRunner ?? deps.codexRunner;
+  const defaultCodex = providedTaskRunner && deps.codexAccountClient ? null : new CodexClient(deps.config);
+  const taskRunner = providedTaskRunner ?? (defaultCodex as CodexClient);
   const codexAccountClient = deps.codexAccountClient ?? (defaultCodex as CodexClient);
 
   void app.register(sensible);
@@ -71,7 +74,7 @@ export function buildApp(deps: AppDeps) {
     await protectedApp.register(reposRoutes);
     await protectedApp.register(tokenRoutes, { db, config: deps.config });
     await protectedApp.register(codexAccountRoutes, { codex: codexAccountClient });
-    await protectedApp.register(taskRoutes, { db, codexRunner });
+    await protectedApp.register(taskRoutes, { db, taskRunner });
   });
 
   return app;

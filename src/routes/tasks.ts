@@ -1,7 +1,7 @@
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
 import type { Db } from "../db/connection.js";
-import type { CodexRunner } from "../codex/client.js";
+import type { TaskRunner } from "../provider/task-runner.js";
 import { createTask, getTask } from "../codex/tasks.js";
 import { listTaskEvents, publicTaskEvent } from "../codex/task-events.js";
 import { getTaskDiffArtifact } from "../codex/diff-artifacts.js";
@@ -35,7 +35,7 @@ function taskResponse(task: NonNullable<ReturnType<typeof getTask>>) {
   };
 }
 
-export async function taskRoutes(app: FastifyInstance, deps: { db: Db; codexRunner: CodexRunner }) {
+export async function taskRoutes(app: FastifyInstance, deps: { db: Db; taskRunner: TaskRunner }) {
   app.post("/v1/tasks", async (request, reply) => {
     request.audit = { ...request.audit, action: "tasks:create" };
 
@@ -56,7 +56,7 @@ export async function taskRoutes(app: FastifyInstance, deps: { db: Db; codexRunn
     const taskId = makeId("task");
     request.audit = { ...request.audit, taskId };
 
-    const task = createTask(deps.db, deps.codexRunner, {
+    const task = createTask(deps.db, deps.taskRunner, {
       id: taskId,
       tokenId: request.auth.id,
       repoId: repo.id,

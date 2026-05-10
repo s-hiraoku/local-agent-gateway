@@ -1,6 +1,6 @@
 import type { Db } from "../db/connection.js";
 import type { TaskRecord } from "../db/schema.js";
-import type { CodexRunner } from "./client.js";
+import type { TaskRunner } from "../provider/task-runner.js";
 import type { TaskMode } from "../policy/modes.js";
 import { makeId, nowIso } from "../utils/ids.js";
 import { sanitizePublicText } from "../utils/sanitize.js";
@@ -43,7 +43,7 @@ export function parseTaskRow(row: TaskRow): TaskRecord {
 
 export function createTask(
   db: Db,
-  runner: CodexRunner,
+  runner: TaskRunner,
   params: {
     tokenId: string;
     repoId: string;
@@ -90,7 +90,7 @@ function createPendingTask(
 
 async function runTask(
   db: Db,
-  runner: CodexRunner,
+  runner: TaskRunner,
   id: string,
   params: {
     repoId: string;
