@@ -2,8 +2,8 @@ import type { TaskMode } from "../policy/modes.js";
 import type { NewTaskEvent } from "../tasks/task-events.js";
 
 export type TaskRunResult = {
-  provider: "codex";
-  backend: "app-server";
+  provider: string;
+  backend: string;
   threadId: string;
   summary: string;
   changedFiles: string[];
