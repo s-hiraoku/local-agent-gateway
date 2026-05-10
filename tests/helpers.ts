@@ -4,7 +4,7 @@ import { migrate } from "../src/db/migrate.js";
 import { createApiToken } from "../src/auth/token.js";
 import type { AppConfig } from "../src/config.js";
 import type { CodexAccountClient, CodexAccountState, DeviceCodeLogin } from "../src/codex/client.js";
-import type { NewTaskEvent } from "../src/codex/task-events.js";
+import type { NewTaskEvent } from "../src/tasks/task-events.js";
 import type { TaskRunner, TaskRunResult } from "../src/provider/task-runner.js";
 
 export const TEST_CONFIG: AppConfig = {

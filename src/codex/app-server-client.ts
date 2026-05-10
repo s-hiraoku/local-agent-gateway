@@ -1,6 +1,6 @@
 import { relative, resolve, sep } from "node:path";
 import type { AppConfig } from "../config.js";
-import type { NewTaskEvent } from "./task-events.js";
+import type { NewTaskEvent } from "../tasks/task-events.js";
 import type { TaskMode } from "../policy/modes.js";
 import type { TaskRunner, TaskRunResult } from "../provider/task-runner.js";
 import { ApiError } from "../utils/errors.js";

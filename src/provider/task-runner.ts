@@ -1,5 +1,5 @@
 import type { TaskMode } from "../policy/modes.js";
-import type { NewTaskEvent } from "../codex/task-events.js";
+import type { NewTaskEvent } from "../tasks/task-events.js";
 
 export type TaskRunResult = {
   provider: "codex";

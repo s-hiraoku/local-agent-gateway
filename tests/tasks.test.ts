@@ -456,7 +456,7 @@ describe("tasks", () => {
       changedFiles: [":(glob)**/*.ts"],
       patch: ""
     });
-    expect(JSON.stringify(response.json())).not.toContain("src/codex/diff-artifacts.ts");
+    expect(JSON.stringify(response.json())).not.toContain("src/tasks/diff-artifacts.ts");
   });
 
   it("serves stored diff artifacts instead of reading the live task row at request time", async () => {
