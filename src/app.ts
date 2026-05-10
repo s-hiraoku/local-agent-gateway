@@ -11,6 +11,7 @@ import { writeAuditLog } from "./audit/audit-log.js";
 import { ApiError, installErrorHandler } from "./utils/errors.js";
 import { healthRoutes } from "./routes/health.js";
 import { reposRoutes } from "./routes/repos.js";
+import { providersRoutes } from "./routes/providers.js";
 import { tokenRoutes } from "./routes/tokens.js";
 import { taskRoutes } from "./routes/tasks.js";
 import { codexAccountRoutes } from "./routes/codex-account.js";
@@ -72,6 +73,7 @@ export function buildApp(deps: AppDeps) {
   void app.register(async (protectedApp) => {
     protectedApp.addHook("preHandler", authenticate);
     await protectedApp.register(reposRoutes);
+    await protectedApp.register(providersRoutes);
     await protectedApp.register(tokenRoutes, { db, config: deps.config });
     await protectedApp.register(codexAccountRoutes, { codex: codexAccountClient });
     await protectedApp.register(taskRoutes, { db, taskRunner });

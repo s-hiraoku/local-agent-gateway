@@ -116,6 +116,7 @@ Unauthenticated:
 Authenticated:
 
 - `GET /v1/repos` requires `task:read`; returns only repos covered by the caller's `repo:<repoId>` scopes.
+- `GET /v1/providers` requires `task:read`; returns available task provider IDs and public capabilities without backend internals.
 - `POST /v1/tokens` requires `token:create`; tokens cannot mint scopes they do not already have, and child tokens cannot outlive their issuer.
 - `GET /v1/tokens` requires `token:read`; never returns raw tokens or token hashes.
 - `DELETE /v1/tokens/:id` requires `token:revoke`; revokes without physical deletion.

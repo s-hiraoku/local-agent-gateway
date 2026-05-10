@@ -166,6 +166,38 @@ curl http://127.0.0.1:8787/v1/repos \
 }
 ```
 
+## Provider 一覧
+
+利用可能な task provider と公開 capability を確認できます。backend 名、transport、内部 payload は返しません。
+
+```bash
+curl http://127.0.0.1:8787/v1/providers \
+  -H "Authorization: Bearer $CODEXGW_TOKEN"
+```
+
+レスポンス例:
+
+```json
+{
+  "providers": [
+    {
+      "id": "codex",
+      "label": "Codex",
+      "capabilities": {
+        "readOnly": true,
+        "workspaceWrite": true,
+        "streamEvents": true,
+        "diffArtifacts": true,
+        "accountAuth": true,
+        "cancel": false,
+        "steer": false,
+        "models": false
+      }
+    }
+  ]
+}
+```
+
 ## Codex アカウント認証
 
 Codex アカウント操作は App Server の `account/*` を Gateway 内部から呼び出します。レスポンスには API key、access token、refresh token、raw JSON-RPC payload は含めません。
