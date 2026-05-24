@@ -21,6 +21,7 @@ The following API shapes remain stable unless a breaking change is explicitly re
 - `GET /healthz`
 - `GET /v1/repos`
 - `POST /v1/tasks`
+- `GET /v1/tasks`
 - `GET /v1/tasks/:id`
 - token management APIs
 - Codex account APIs
@@ -32,8 +33,11 @@ New client-facing APIs should be additive. Existing task responses should not ga
 Implemented in G1:
 
 - Append-only `task_events` storage.
-- `GET /v1/tasks/:id/events` as an authenticated Server-Sent Events replay endpoint.
+- `GET /v1/tasks` for authorized task listing with repo, status, and limit filters.
+- `GET /v1/tasks/:id/events` as an authenticated Server-Sent Events replay and live event endpoint.
+- Per-repo in-process serialization for `workspace-write` tasks; `read-only` tasks remain parallel.
 - Minimal normalized Gateway domain events:
+  - `task.queued`
   - `task.started`
   - `agent.message.completed`
   - `file.changed`
@@ -43,7 +47,7 @@ Implemented in G1:
 - `Last-Event-ID` support for replay after a known event ID.
 - A minimal `npm run smoke` check that loads the built app and verifies `GET /healthz`.
 
-The existing task polling response remains unchanged.
+Existing task polling responses do not expose Codex internal IDs or raw paths. Task status can now be `queued`, `pending`, `completed`, or `failed`.
 
 ## Diff Artifacts
 

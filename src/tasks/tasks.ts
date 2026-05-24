@@ -1,11 +1,13 @@
 import type { Db } from "../db/connection.js";
-import type { TaskRecord } from "../db/schema.js";
+import type { TaskEventRecord, TaskRecord } from "../db/schema.js";
 import type { TaskRunner } from "../provider/task-runner.js";
 import type { TaskMode } from "../policy/modes.js";
 import { makeId, nowIso } from "../utils/ids.js";
 import { sanitizePublicText } from "../utils/sanitize.js";
 import { appendTaskEvent } from "./task-events.js";
 import { captureTaskDiffArtifact } from "./diff-artifacts.js";
+import type { LiveTaskEvents } from "./live-events.js";
+import type { InitialTaskStatus, TaskQueue } from "./task-queue.js";
 
 type TaskRow = {
   id: string;
@@ -15,7 +17,7 @@ type TaskRow = {
   repo: string;
   mode: string;
   thread_id: string | null;
-  status: "pending" | "completed" | "failed";
+  status: "queued" | "pending" | "completed" | "failed";
   summary: string;
   changed_files_json: string;
   error: string | null;
@@ -44,6 +46,7 @@ export function parseTaskRow(row: TaskRow): TaskRecord {
 export function createTask(
   db: Db,
   runner: TaskRunner,
+  queue: TaskQueue,
   params: {
     tokenId: string;
     repoId: string;
@@ -51,21 +54,29 @@ export function createTask(
     prompt: string;
     mode: TaskMode;
     id?: string;
+    liveEvents?: LiveTaskEvents;
   }
 ): TaskRecord {
-  const task = createPendingTask(db, params);
-  void runTask(db, runner, task.id, params);
+  const initialStatus = queue.initialStatus(params.repoId, params.mode);
+  const task = createTaskRecord(db, params, initialStatus, params.liveEvents);
+  queue.enqueue({
+    repoId: params.repoId,
+    mode: params.mode,
+    run: () => runTask(db, runner, task.id, params)
+  });
   return task;
 }
 
-function createPendingTask(
+function createTaskRecord(
   db: Db,
   params: {
     tokenId: string;
     repoId: string;
     mode: TaskMode;
     id?: string;
-  }
+  },
+  status: InitialTaskStatus,
+  liveEvents?: LiveTaskEvents
 ): TaskRecord {
   const id = params.id ?? makeId("task");
   const createdAt = nowIso();
@@ -74,16 +85,19 @@ function createPendingTask(
     `INSERT INTO tasks (
       id, token_id, provider, backend, repo, mode, thread_id, status, summary, changed_files_json, error, created_at, completed_at
     ) VALUES (
-      @id, @tokenId, 'codex', 'app-server', @repo, @mode, NULL, 'pending', '', '[]', NULL, @createdAt, NULL
+      @id, @tokenId, 'codex', 'app-server', @repo, @mode, NULL, @status, '', '[]', NULL, @createdAt, NULL
     )`
   ).run({
     id,
     tokenId: params.tokenId,
     repo: params.repoId,
     mode: params.mode,
+    status,
     createdAt
   });
-  appendTaskEvent(db, id, { type: "task.started", payload: { repo: params.repoId, mode: params.mode } });
+  if (status === "queued") {
+    appendAndPublish(db, liveEvents, id, { type: "task.queued", payload: { repo: params.repoId, mode: params.mode } });
+  }
 
   return getTask(db, id) as TaskRecord;
 }
@@ -97,12 +111,14 @@ async function runTask(
     cwd: string;
     prompt: string;
     mode: TaskMode;
+    liveEvents?: LiveTaskEvents;
   }
 ): Promise<void> {
   let sawAgentMessage = false;
   let sawDiffUpdate = false;
 
   try {
+    markTaskStarted(db, id, params.repoId, params.mode, params.liveEvents);
     const result = await runner.runTask({
       prompt: params.prompt,
       cwd: params.cwd,
@@ -114,21 +130,21 @@ async function runTask(
         if (event.type === "diff.available") {
           sawDiffUpdate = true;
         }
-        appendTaskEvent(db, id, event);
+        appendAndPublish(db, params.liveEvents, id, event);
       }
     });
     const completedAt = nowIso();
     if (!sawAgentMessage) {
-      appendTaskEvent(db, id, {
+      appendAndPublish(db, params.liveEvents, id, {
         type: "agent.message.completed",
         payload: { text: result.summary, phase: "final_answer" }
       });
     }
     if (!sawDiffUpdate && result.changedFiles.length > 0) {
-      appendTaskEvent(db, id, { type: "diff.available", payload: { changedFiles: result.changedFiles } });
+      appendAndPublish(db, params.liveEvents, id, { type: "diff.available", payload: { changedFiles: result.changedFiles } });
     }
     await captureTaskDiffArtifact(db, { taskId: id, repoId: params.repoId, changedFiles: result.changedFiles });
-    appendTaskEvent(db, id, { type: "task.completed", payload: { summary: result.summary } });
+    appendAndPublish(db, params.liveEvents, id, { type: "task.completed", payload: { summary: result.summary } });
 
     db.prepare(
       `UPDATE tasks
@@ -152,7 +168,7 @@ async function runTask(
   } catch (error) {
     const completedAt = nowIso();
     const publicError = error instanceof Error ? sanitizePublicText(error.message) : "Task failed";
-    appendTaskEvent(db, id, {
+    appendAndPublish(db, params.liveEvents, id, {
       type: "task.failed",
       payload: { error: publicError }
     });
@@ -170,7 +186,66 @@ async function runTask(
   }
 }
 
+function markTaskStarted(db: Db, id: string, repoId: string, mode: TaskMode, liveEvents?: LiveTaskEvents): void {
+  db.prepare("UPDATE tasks SET status = 'pending' WHERE id = ? AND status = 'queued'").run(id);
+  appendAndPublish(db, liveEvents, id, { type: "task.started", payload: { repo: repoId, mode } });
+}
+
+function appendAndPublish(
+  db: Db,
+  liveEvents: LiveTaskEvents | undefined,
+  taskId: string,
+  event: Parameters<typeof appendTaskEvent>[2]
+): TaskEventRecord {
+  const record = appendTaskEvent(db, taskId, event);
+  liveEvents?.publish(record);
+  return record;
+}
+
 export function getTask(db: Db, id: string): TaskRecord | null {
   const row = db.prepare("SELECT * FROM tasks WHERE id = ?").get(id) as TaskRow | undefined;
   return row ? parseTaskRow(row) : null;
+}
+
+export function listTasks(
+  db: Db,
+  params: {
+    repos: readonly string[];
+    repo?: string;
+    status?: TaskRecord["status"];
+    limit: number;
+  }
+): TaskRecord[] {
+  if (params.repos.length === 0) {
+    return [];
+  }
+
+  const repos = params.repo ? params.repos.filter((repo) => repo === params.repo) : [...params.repos];
+  if (repos.length === 0) {
+    return [];
+  }
+
+  const repoPlaceholders = repos.map((_, index) => `@repo${index}`).join(", ");
+  const values: Record<string, string | number> = {
+    limit: params.limit
+  };
+  repos.forEach((repo, index) => {
+    values[`repo${index}`] = repo;
+  });
+
+  const filters = [`repo IN (${repoPlaceholders})`];
+  if (params.status) {
+    filters.push("status = @status");
+    values.status = params.status;
+  }
+
+  const rows = db
+    .prepare(
+      `SELECT * FROM tasks
+       WHERE ${filters.join(" AND ")}
+       ORDER BY created_at DESC, id DESC
+       LIMIT @limit`
+    )
+    .all(values) as TaskRow[];
+  return rows.map(parseTaskRow);
 }

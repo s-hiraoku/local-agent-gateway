@@ -43,6 +43,10 @@ const DEFAULT_ALLOWED_REPOS = {
 } as const satisfies Record<string, AllowedRepo>;
 
 function loadAllowedRepos(): Record<string, AllowedRepo> {
+  if (process.env.NODE_ENV === "test") {
+    return DEFAULT_ALLOWED_REPOS;
+  }
+
   const raw = process.env.CODEXGW_ALLOWED_REPOS_JSON;
   if (!raw?.trim()) {
     if (process.env.NODE_ENV === "production") {

@@ -10,12 +10,40 @@ async function waitForTask(app: FastifyInstance, token: string, taskId: string) 
       headers: authHeader(token)
     });
     const body = response.json();
-    if (body.status !== "pending") {
+    if (body.status === "completed" || body.status === "failed") {
       return body;
     }
     await new Promise((resolve) => setTimeout(resolve, 5));
   }
   throw new Error("Timed out waiting for task completion");
+}
+
+async function waitForCondition(condition: () => boolean, message: string) {
+  for (let attempt = 0; attempt < 50; attempt += 1) {
+    if (condition()) {
+      return;
+    }
+    await new Promise((resolve) => setTimeout(resolve, 5));
+  }
+  throw new Error(message);
+}
+
+class BlockingTaskRunner extends FakeTaskRunner {
+  resolvers: Array<() => void> = [];
+
+  override async runTask(params: Parameters<FakeTaskRunner["runTask"]>[0]) {
+    this.calls.push(params);
+    await new Promise<void>((resolve) => {
+      this.resolvers.push(resolve);
+    });
+    return {
+      provider: "codex",
+      backend: "app-server",
+      threadId: "thr_test",
+      summary: this.summary,
+      changedFiles: this.changedFiles
+    };
+  }
 }
 
 describe("tasks", () => {
@@ -184,6 +212,59 @@ describe("tasks", () => {
     expect(readResponse.statusCode).toBe(200);
   });
 
+  it("lists authorized tasks without exposing internal ids", async () => {
+    const { app, db } = makeTestApp();
+    const token = issueToken(db, ["task:create", "task:read", "repo:local-agent-gateway", "mode:read-only"]);
+
+    const created = await app.inject({
+      method: "POST",
+      url: "/v1/tasks",
+      headers: authHeader(token.token),
+      payload: {
+        repo: "local-agent-gateway",
+        prompt: "Read README",
+        mode: "read-only"
+      }
+    });
+    const taskId = created.json().taskId as string;
+    await waitForTask(app, token.token, taskId);
+
+    const response = await app.inject({
+      method: "GET",
+      url: "/v1/tasks?repo=local-agent-gateway&status=completed&limit=10",
+      headers: authHeader(token.token)
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.json().tasks).toHaveLength(1);
+    expect(response.json().tasks[0]).toMatchObject({
+      taskId,
+      status: "completed",
+      repo: "local-agent-gateway"
+    });
+    expect(JSON.stringify(response.json())).not.toContain("thr_test");
+  });
+
+  it("requires task:read and repo scope for task listing", async () => {
+    const { app, db } = makeTestApp();
+    const withoutRead = issueToken(db, ["task:create", "repo:local-agent-gateway", "mode:read-only"]);
+    const withoutRepo = issueToken(db, ["task:read"], { name: "reader" });
+
+    const missingRead = await app.inject({
+      method: "GET",
+      url: "/v1/tasks",
+      headers: authHeader(withoutRead.token)
+    });
+    expect(missingRead.statusCode).toBe(403);
+
+    const missingRepo = await app.inject({
+      method: "GET",
+      url: "/v1/tasks?repo=local-agent-gateway",
+      headers: authHeader(withoutRepo.token)
+    });
+    expect(missingRepo.statusCode).toBe(403);
+  });
+
   it("rejects non-owners without task:read when reading a task", async () => {
     const { app, db } = makeTestApp();
     const owner = issueToken(db, ["task:create", "repo:local-agent-gateway", "mode:read-only"]);
@@ -244,6 +325,99 @@ describe("tasks", () => {
       "task.completed"
     ]);
     expect(JSON.parse(rows[2]?.payload_json ?? "{}")).toEqual({ changedFiles: ["README.md"] });
+  });
+
+  it("queues workspace-write tasks per repo while allowing read-only tasks to run", async () => {
+    const runner = new BlockingTaskRunner();
+    const { app, db } = makeTestApp({ taskRunner: runner });
+    const token = issueToken(db, ["task:create", "task:read", "repo:local-agent-gateway", "mode:read-only", "mode:workspace-write"]);
+
+    const first = await app.inject({
+      method: "POST",
+      url: "/v1/tasks",
+      headers: authHeader(token.token),
+      payload: {
+        repo: "local-agent-gateway",
+        prompt: "First write",
+        mode: "workspace-write"
+      }
+    });
+    await waitForCondition(() => runner.calls.length === 1, "first write task did not start");
+
+    const second = await app.inject({
+      method: "POST",
+      url: "/v1/tasks",
+      headers: authHeader(token.token),
+      payload: {
+        repo: "local-agent-gateway",
+        prompt: "Second write",
+        mode: "workspace-write"
+      }
+    });
+    expect(second.statusCode).toBe(202);
+    expect(second.json().status).toBe("queued");
+    expect(runner.calls).toHaveLength(1);
+
+    const readOnly = await app.inject({
+      method: "POST",
+      url: "/v1/tasks",
+      headers: authHeader(token.token),
+      payload: {
+        repo: "local-agent-gateway",
+        prompt: "Read while write is active",
+        mode: "read-only"
+      }
+    });
+    expect(readOnly.statusCode).toBe(202);
+    await waitForCondition(() => runner.calls.length === 2, "read-only task did not run while write was active");
+
+    runner.resolvers[0]?.();
+    await waitForCondition(() => runner.calls.length === 3, "queued write task did not start");
+    const queuedTask = await app.inject({
+      method: "GET",
+      url: `/v1/tasks/${second.json().taskId as string}`,
+      headers: authHeader(token.token)
+    });
+    expect(queuedTask.json().status).toBe("pending");
+
+    runner.resolvers[1]?.();
+    runner.resolvers[2]?.();
+    await waitForTask(app, token.token, first.json().taskId as string);
+    await waitForTask(app, token.token, second.json().taskId as string);
+    await waitForTask(app, token.token, readOnly.json().taskId as string);
+  });
+
+  it("streams live task events until a pending task completes", async () => {
+    const runner = new BlockingTaskRunner();
+    const { app, db } = makeTestApp({ taskRunner: runner });
+    const token = issueToken(db, ["task:create", "task:read", "repo:local-agent-gateway", "mode:read-only"]);
+
+    const created = await app.inject({
+      method: "POST",
+      url: "/v1/tasks",
+      headers: authHeader(token.token),
+      payload: {
+        repo: "local-agent-gateway",
+        prompt: "Long read",
+        mode: "read-only"
+      }
+    });
+    const taskId = created.json().taskId as string;
+    await waitForCondition(() => runner.calls.length === 1, "task did not start");
+
+    const eventsPromise = app.inject({
+      method: "GET",
+      url: `/v1/tasks/${taskId}/events`,
+      headers: authHeader(token.token)
+    });
+    await new Promise((resolve) => setTimeout(resolve, 5));
+    runner.resolvers[0]?.();
+    const response = await eventsPromise;
+
+    expect(response.statusCode).toBe(200);
+    expect(response.body).toContain("event: task.started");
+    expect(response.body).toContain("event: task.completed");
+    expect(response.body).toContain(`"taskId":"${taskId}"`);
   });
 
   it("records failed task events with sanitized public payloads", async () => {

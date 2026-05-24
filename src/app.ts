@@ -15,6 +15,8 @@ import { providersRoutes } from "./routes/providers.js";
 import { tokenRoutes } from "./routes/tokens.js";
 import { taskRoutes } from "./routes/tasks.js";
 import { codexAccountRoutes } from "./routes/codex-account.js";
+import { LiveTaskEvents } from "./tasks/live-events.js";
+import { TaskQueue } from "./tasks/task-queue.js";
 
 export type AppDeps = {
   config: AppConfig;
@@ -22,6 +24,8 @@ export type AppDeps = {
   taskRunner?: TaskRunner;
   codexRunner?: TaskRunner;
   codexAccountClient?: CodexAccountClient;
+  liveTaskEvents?: LiveTaskEvents;
+  taskQueue?: TaskQueue;
 };
 
 export function buildApp(deps: AppDeps) {
@@ -40,6 +44,8 @@ export function buildApp(deps: AppDeps) {
   const defaultCodex = providedTaskRunner && deps.codexAccountClient ? null : new CodexClient(deps.config);
   const taskRunner = providedTaskRunner ?? (defaultCodex as CodexClient);
   const codexAccountClient = deps.codexAccountClient ?? (defaultCodex as CodexClient);
+  const liveTaskEvents = deps.liveTaskEvents ?? new LiveTaskEvents();
+  const taskQueue = deps.taskQueue ?? new TaskQueue();
 
   void app.register(sensible);
   app.setErrorHandler(installErrorHandler());
@@ -76,7 +82,7 @@ export function buildApp(deps: AppDeps) {
     await protectedApp.register(providersRoutes);
     await protectedApp.register(tokenRoutes, { db, config: deps.config });
     await protectedApp.register(codexAccountRoutes, { codex: codexAccountClient });
-    await protectedApp.register(taskRoutes, { db, taskRunner });
+    await protectedApp.register(taskRoutes, { db, taskRunner, taskQueue, liveTaskEvents });
   });
 
   return app;

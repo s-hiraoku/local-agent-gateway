@@ -1,15 +1,21 @@
 import type { FastifyInstance } from "fastify";
+import { PassThrough } from "node:stream";
 import { z } from "zod";
+import type { TaskEventType, TaskRecord } from "../db/schema.js";
 import type { Db } from "../db/connection.js";
 import type { TaskRunner } from "../provider/task-runner.js";
-import { createTask, getTask } from "../tasks/tasks.js";
+import { createTask, getTask, listTasks } from "../tasks/tasks.js";
 import { listTaskEvents, publicTaskEvent } from "../tasks/task-events.js";
 import { getTaskDiffArtifact } from "../tasks/diff-artifacts.js";
 import { authorizeTaskCreate, authorizeTaskRead } from "../policy/task-policy.js";
+import { listAllowedReposForScopes } from "../policy/repos.js";
+import { requireScopes } from "../auth/authorize.js";
 import { ApiError } from "../utils/errors.js";
 import { hashPrompt } from "../auth/hash.js";
 import { makeId } from "../utils/ids.js";
 import { sanitizePublicText } from "../utils/sanitize.js";
+import type { LiveTaskEvents } from "../tasks/live-events.js";
+import type { TaskQueue } from "../tasks/task-queue.js";
 
 const createTaskSchema = z.object({
   repo: z.string().min(1).max(100),
@@ -17,11 +23,17 @@ const createTaskSchema = z.object({
   mode: z.enum(["read-only", "workspace-write"]).optional()
 }).strict();
 
+const listTasksQuerySchema = z.object({
+  repo: z.string().min(1).max(100).optional(),
+  status: z.enum(["queued", "pending", "completed", "failed"]).optional(),
+  limit: z.coerce.number().int().min(1).max(100).default(50)
+}).strict();
+
 function previewPrompt(prompt: string): string {
   return `[prompt omitted; length=${prompt.length}]`;
 }
 
-function taskResponse(task: NonNullable<ReturnType<typeof getTask>>) {
+function taskResponse(task: TaskRecord) {
   return {
     taskId: task.id,
     status: task.status,
@@ -35,7 +47,10 @@ function taskResponse(task: NonNullable<ReturnType<typeof getTask>>) {
   };
 }
 
-export async function taskRoutes(app: FastifyInstance, deps: { db: Db; taskRunner: TaskRunner }) {
+export async function taskRoutes(
+  app: FastifyInstance,
+  deps: { db: Db; taskRunner: TaskRunner; taskQueue: TaskQueue; liveTaskEvents: LiveTaskEvents }
+) {
   app.post("/v1/tasks", async (request, reply) => {
     request.audit = { ...request.audit, action: "tasks:create" };
 
@@ -56,15 +71,40 @@ export async function taskRoutes(app: FastifyInstance, deps: { db: Db; taskRunne
     const taskId = makeId("task");
     request.audit = { ...request.audit, taskId };
 
-    const task = createTask(deps.db, deps.taskRunner, {
+    const task = createTask(deps.db, deps.taskRunner, deps.taskQueue, {
       id: taskId,
       tokenId: request.auth.id,
       repoId: repo.id,
       cwd: repo.path,
       prompt: body.prompt,
-      mode
+      mode,
+      liveEvents: deps.liveTaskEvents
     });
     return reply.status(202).send(taskResponse(task));
+  });
+
+  app.get("/v1/tasks", async (request) => {
+    request.audit = { ...request.audit, action: "tasks:list" };
+    requireScopes(request, ["task:read"]);
+    if (!request.auth) {
+      throw new ApiError("UNAUTHORIZED");
+    }
+
+    const query = listTasksQuerySchema.parse(request.query);
+    const repos = listAllowedReposForScopes(request.auth.scopes).map((repo) => repo.id);
+    if (query.repo && !repos.includes(query.repo)) {
+      throw new ApiError("FORBIDDEN");
+    }
+    request.audit = { ...request.audit, repo: query.repo ?? null };
+
+    return {
+      tasks: listTasks(deps.db, {
+        repos,
+        limit: query.limit,
+        ...(query.repo ? { repo: query.repo } : {}),
+        ...(query.status ? { status: query.status } : {})
+      }).map(taskResponse)
+    };
   });
 
   app.get("/v1/tasks/:id/events", async (request, reply) => {
@@ -81,6 +121,52 @@ export async function taskRoutes(app: FastifyInstance, deps: { db: Db; taskRunne
 
     const events = listTaskEvents(deps.db, task.id, lastEventId);
     const body = `retry: 2000\n\n${events.map((event) => formatSseEvent(publicTaskEvent(task.id, event))).join("")}`;
+    if (!isTerminalTask(task)) {
+      const stream = new PassThrough();
+      let closed = false;
+      let lastSeenId = lastEventId ?? 0;
+      let unsubscribe = () => {};
+
+      const close = () => {
+        if (!closed) {
+          closed = true;
+          unsubscribe();
+          stream.end();
+        }
+      };
+
+      const writeEvent = (event: (typeof events)[number]) => {
+        if (closed || event.id <= lastSeenId) {
+          return;
+        }
+        lastSeenId = event.id;
+        stream.write(formatSseEvent(publicTaskEvent(task.id, event)));
+        if (isTerminalEventType(event.type)) {
+          close();
+        }
+      };
+
+      unsubscribe = deps.liveTaskEvents.subscribe(task.id, writeEvent);
+      stream.write("retry: 2000\n\n");
+      for (const event of events) {
+        writeEvent(event);
+      }
+      for (const event of listTaskEvents(deps.db, task.id, lastSeenId)) {
+        writeEvent(event);
+      }
+      const currentTask = getTask(deps.db, task.id);
+      if (!currentTask || isTerminalTask(currentTask)) {
+        close();
+      }
+      request.raw.on("close", close);
+
+      return reply
+        .header("cache-control", "no-cache")
+        .header("connection", "keep-alive")
+        .type("text/event-stream; charset=utf-8")
+        .send(stream);
+    }
+
     return reply
       .header("cache-control", "no-cache")
       .header("connection", "keep-alive")
@@ -128,4 +214,12 @@ function parseLastEventId(value: string | string[] | undefined): number | undefi
 
 function formatSseEvent(event: ReturnType<typeof publicTaskEvent>): string {
   return `id: ${event.id}\nevent: ${event.type}\ndata: ${JSON.stringify(event)}\n\n`;
+}
+
+function isTerminalTask(task: TaskRecord): boolean {
+  return task.status === "completed" || task.status === "failed";
+}
+
+function isTerminalEventType(type: TaskEventType): boolean {
+  return type === "task.completed" || type === "task.failed";
 }

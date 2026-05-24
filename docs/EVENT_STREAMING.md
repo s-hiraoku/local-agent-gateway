@@ -13,7 +13,7 @@ Authorization matches `GET /v1/tasks/:id`:
 - The task creator can read its own event stream without `task:read`.
 - Other tokens require both `task:read` and `repo:<task.repo>`.
 
-The endpoint returns Server-Sent Events. The current implementation replays persisted events and supports `Last-Event-ID`. If the task is not terminal yet, the response may close after a point-in-time replay; clients should reconnect with the latest event ID to resume.
+The endpoint returns Server-Sent Events. It replays persisted events and supports `Last-Event-ID`. If the task is not terminal yet, the response remains open and streams newly persisted Gateway events from the in-process live event bus until a terminal task event is emitted. If the Gateway process restarts or the connection closes, clients should reconnect with the latest event ID to resume from persisted events.
 
 ## SSE Format
 
@@ -45,6 +45,7 @@ Public event data must not contain:
 
 The initial type set is intentionally small and client-neutral:
 
+- `task.queued`
 - `task.started`
 - `task.completed`
 - `task.failed`
@@ -59,6 +60,7 @@ The initial type set is intentionally small and client-neutral:
 
 G1 persists these events when available:
 
+- `task.queued`
 - `task.started`
 - `agent.message.completed`
 - `file.changed`
@@ -72,7 +74,8 @@ Codex App Server stream notifications are mapped inside the Gateway before persi
 
 | App Server signal | Gateway event |
 | --- | --- |
-| task row inserted before runner starts | `task.started` |
+| write task inserted behind an active write task for the same repo | `task.queued` |
+| runner starts executing the task | `task.started` |
 | `item/completed` with `agentMessage` | `agent.message.completed` |
 | `item/completed` with completed file changes | `file.changed`, then `diff.available` |
 | runner result / turn completed successfully | `task.completed` |
@@ -93,4 +96,4 @@ curl http://127.0.0.1:8787/v1/tasks/task_.../events \
 
 Responses include a `retry: 2000` SSE directive so clients have a default reconnect interval. For non-terminal tasks, a closed connection means the client should reconnect with `Last-Event-ID` to catch up.
 
-Live fan-out can be added later by introducing an active task session registry and broadcasting runner callbacks to connected SSE clients. That should be a separate phase because it changes task lifecycle management.
+Live fan-out is process-local. It does not expose Codex internal thread IDs or session handles, and it does not imply that task control APIs are available. If the Gateway restarts, active live subscriptions are lost, but persisted events remain replayable.
