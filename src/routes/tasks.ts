@@ -126,6 +126,8 @@ export async function taskRoutes(
       let closed = false;
       let lastSeenId = lastEventId ?? 0;
       let unsubscribe = () => {};
+      const bufferedLive: (typeof events)[number][] = [];
+      let replaying = true;
 
       const close = () => {
         if (!closed) {
@@ -146,7 +148,13 @@ export async function taskRoutes(
         }
       };
 
-      unsubscribe = deps.liveTaskEvents.subscribe(task.id, writeEvent);
+      unsubscribe = deps.liveTaskEvents.subscribe(task.id, (event) => {
+        if (replaying) {
+          bufferedLive.push(event);
+          return;
+        }
+        writeEvent(event);
+      });
       stream.write("retry: 2000\n\n");
       for (const event of events) {
         writeEvent(event);
@@ -154,6 +162,8 @@ export async function taskRoutes(
       for (const event of listTaskEvents(deps.db, task.id, lastSeenId)) {
         writeEvent(event);
       }
+      replaying = false;
+      bufferedLive.sort((a, b) => a.id - b.id).forEach(writeEvent);
       const currentTask = getTask(deps.db, task.id);
       if (!currentTask || isTerminalTask(currentTask)) {
         close();

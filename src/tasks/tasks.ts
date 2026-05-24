@@ -144,8 +144,6 @@ async function runTask(
       appendAndPublish(db, params.liveEvents, id, { type: "diff.available", payload: { changedFiles: result.changedFiles } });
     }
     await captureTaskDiffArtifact(db, { taskId: id, repoId: params.repoId, changedFiles: result.changedFiles });
-    appendAndPublish(db, params.liveEvents, id, { type: "task.completed", payload: { summary: result.summary } });
-
     db.prepare(
       `UPDATE tasks
        SET thread_id = @threadId,
@@ -165,13 +163,10 @@ async function runTask(
       changedFilesJson: JSON.stringify(result.changedFiles),
       completedAt
     });
+    appendAndPublish(db, params.liveEvents, id, { type: "task.completed", payload: { summary: result.summary } });
   } catch (error) {
     const completedAt = nowIso();
     const publicError = error instanceof Error ? sanitizePublicText(error.message) : "Task failed";
-    appendAndPublish(db, params.liveEvents, id, {
-      type: "task.failed",
-      payload: { error: publicError }
-    });
     db.prepare(
       `UPDATE tasks
        SET status = 'failed',
@@ -182,6 +177,10 @@ async function runTask(
       id,
       error: publicError,
       completedAt
+    });
+    appendAndPublish(db, params.liveEvents, id, {
+      type: "task.failed",
+      payload: { error: publicError }
     });
   }
 }

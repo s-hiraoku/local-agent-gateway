@@ -6,6 +6,7 @@ import type { AppConfig } from "../src/config.js";
 import type { CodexAccountClient, CodexAccountState, DeviceCodeLogin } from "../src/codex/client.js";
 import type { NewTaskEvent } from "../src/tasks/task-events.js";
 import type { TaskRunner, TaskRunResult } from "../src/provider/task-runner.js";
+import type { LiveTaskEvents } from "../src/tasks/live-events.js";
 
 export const TEST_CONFIG: AppConfig = {
   NODE_ENV: "test",
@@ -87,7 +88,13 @@ export function makeTestDb(): Db {
 }
 
 export function makeTestApp(
-  options: { db?: Db; taskRunner?: TaskRunner; codexRunner?: TaskRunner; codexAccountClient?: CodexAccountClient } = {}
+  options: {
+    db?: Db;
+    taskRunner?: TaskRunner;
+    codexRunner?: TaskRunner;
+    codexAccountClient?: CodexAccountClient;
+    liveTaskEvents?: LiveTaskEvents;
+  } = {}
 ) {
   const db = options.db ?? makeTestDb();
   const taskRunner = options.taskRunner ?? options.codexRunner ?? new FakeTaskRunner();
@@ -96,7 +103,8 @@ export function makeTestApp(
     config: TEST_CONFIG,
     db,
     taskRunner,
-    codexAccountClient
+    codexAccountClient,
+    ...(options.liveTaskEvents ? { liveTaskEvents: options.liveTaskEvents } : {})
   });
 
   return { app, db, taskRunner, codexRunner: taskRunner, codexAccountClient };

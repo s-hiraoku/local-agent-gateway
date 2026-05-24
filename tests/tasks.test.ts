@@ -1,6 +1,9 @@
 import { describe, expect, it } from "vitest";
 import type { FastifyInstance } from "fastify";
-import { authHeader, FakeTaskRunner, issueToken, makeTestApp } from "./helpers.js";
+import type { TaskEventRecord, TaskEventType } from "../src/db/schema.js";
+import { LiveTaskEvents } from "../src/tasks/live-events.js";
+import { appendTaskEvent } from "../src/tasks/task-events.js";
+import { authHeader, FakeTaskRunner, issueToken, makeTestApp, makeTestDb } from "./helpers.js";
 
 async function waitForTask(app: FastifyInstance, token: string, taskId: string) {
   for (let attempt = 0; attempt < 20; attempt += 1) {
@@ -44,6 +47,40 @@ class BlockingTaskRunner extends FakeTaskRunner {
       changedFiles: this.changedFiles
     };
   }
+}
+
+class SubscribeInjectingLiveTaskEvents extends LiveTaskEvents {
+  constructor(private readonly onSubscribe: (taskId: string) => TaskEventRecord | null) {
+    super();
+  }
+
+  override subscribe(taskId: string, listener: (event: TaskEventRecord) => void): () => void {
+    const unsubscribe = super.subscribe(taskId, listener);
+    const event = this.onSubscribe(taskId);
+    if (event) {
+      listener(event);
+    }
+    return unsubscribe;
+  }
+}
+
+class StatusObservingLiveTaskEvents extends LiveTaskEvents {
+  terminalStatuses: string[] = [];
+
+  constructor(private readonly readStatus: (taskId: string) => string) {
+    super();
+  }
+
+  override publish(event: TaskEventRecord): void {
+    if (isTerminalEventType(event.type)) {
+      this.terminalStatuses.push(this.readStatus(event.taskId));
+    }
+    super.publish(event);
+  }
+}
+
+function isTerminalEventType(type: TaskEventType): boolean {
+  return type === "task.completed" || type === "task.failed";
 }
 
 describe("tasks", () => {
@@ -418,6 +455,102 @@ describe("tasks", () => {
     expect(response.body).toContain("event: task.started");
     expect(response.body).toContain("event: task.completed");
     expect(response.body).toContain(`"taskId":"${taskId}"`);
+  });
+
+  it("keeps persisted replay events ordered when live events arrive during SSE replay", async () => {
+    const runner = new BlockingTaskRunner();
+    const db = makeTestDb();
+    let injected = false;
+    const liveTaskEvents = new SubscribeInjectingLiveTaskEvents((taskId) => {
+      if (injected) {
+        return null;
+      }
+      injected = true;
+      return appendTaskEvent(db, taskId, {
+        type: "agent.message.completed",
+        payload: { text: "live during replay" }
+      });
+    });
+    const { app } = makeTestApp({ db, taskRunner: runner, liveTaskEvents });
+    const token = issueToken(db, ["task:create", "task:read", "repo:local-agent-gateway", "mode:read-only"]);
+
+    const created = await app.inject({
+      method: "POST",
+      url: "/v1/tasks",
+      headers: authHeader(token.token),
+      payload: {
+        repo: "local-agent-gateway",
+        prompt: "Long read",
+        mode: "read-only"
+      }
+    });
+    const taskId = created.json().taskId as string;
+    await waitForCondition(() => runner.calls.length === 1, "task did not start");
+
+    const eventsPromise = app.inject({
+      method: "GET",
+      url: `/v1/tasks/${taskId}/events`,
+      headers: authHeader(token.token)
+    });
+    await new Promise((resolve) => setTimeout(resolve, 5));
+    runner.resolvers[0]?.();
+    const response = await eventsPromise;
+
+    expect(response.statusCode).toBe(200);
+    expect(response.body.indexOf("event: task.started")).toBeGreaterThan(-1);
+    expect(response.body.indexOf("event: agent.message.completed")).toBeGreaterThan(
+      response.body.indexOf("event: task.started")
+    );
+  });
+
+  it("publishes terminal events only after the task row is terminal", async () => {
+    const db = makeTestDb();
+    const liveTaskEvents = new StatusObservingLiveTaskEvents((taskId) => {
+      const row = db.prepare("SELECT status FROM tasks WHERE id = ?").get(taskId) as { status: string };
+      return row.status;
+    });
+    const { app } = makeTestApp({ db, liveTaskEvents });
+    const token = issueToken(db, ["task:create", "task:read", "repo:local-agent-gateway", "mode:read-only"]);
+
+    const created = await app.inject({
+      method: "POST",
+      url: "/v1/tasks",
+      headers: authHeader(token.token),
+      payload: {
+        repo: "local-agent-gateway",
+        prompt: "Read README",
+        mode: "read-only"
+      }
+    });
+    await waitForTask(app, token.token, created.json().taskId as string);
+
+    expect(liveTaskEvents.terminalStatuses).toEqual(["completed"]);
+  });
+
+  it("publishes failed events only after the task row is failed", async () => {
+    const db = makeTestDb();
+    const runner = new FakeTaskRunner();
+    runner.error = new Error("failed");
+    const liveTaskEvents = new StatusObservingLiveTaskEvents((taskId) => {
+      const row = db.prepare("SELECT status FROM tasks WHERE id = ?").get(taskId) as { status: string };
+      return row.status;
+    });
+    const { app } = makeTestApp({ db, taskRunner: runner, liveTaskEvents });
+    const token = issueToken(db, ["task:create", "task:read", "repo:local-agent-gateway", "mode:read-only"]);
+
+    const created = await app.inject({
+      method: "POST",
+      url: "/v1/tasks",
+      headers: authHeader(token.token),
+      payload: {
+        repo: "local-agent-gateway",
+        prompt: "Fail",
+        mode: "read-only"
+      }
+    });
+    await waitForTask(app, token.token, created.json().taskId as string);
+
+    expect(liveTaskEvents.terminalStatuses).toEqual(["failed"]);
   });
 
   it("records failed task events with sanitized public payloads", async () => {
