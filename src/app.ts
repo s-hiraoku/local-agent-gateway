@@ -4,21 +4,28 @@ import type { AppConfig } from "./config.js";
 import type { Db } from "./db/connection.js";
 import { openDatabase } from "./db/connection.js";
 import { migrate } from "./db/migrate.js";
-import { CodexClient, type CodexAccountClient, type CodexRunner } from "./codex/client.js";
+import { CodexClient, type CodexAccountClient } from "./codex/client.js";
+import type { TaskRunner } from "./provider/task-runner.js";
 import { authMiddleware } from "./auth/middleware.js";
 import { writeAuditLog } from "./audit/audit-log.js";
 import { ApiError, installErrorHandler } from "./utils/errors.js";
 import { healthRoutes } from "./routes/health.js";
 import { reposRoutes } from "./routes/repos.js";
+import { providersRoutes } from "./routes/providers.js";
 import { tokenRoutes } from "./routes/tokens.js";
 import { taskRoutes } from "./routes/tasks.js";
 import { codexAccountRoutes } from "./routes/codex-account.js";
+import { LiveTaskEvents } from "./tasks/live-events.js";
+import { TaskQueue } from "./tasks/task-queue.js";
 
 export type AppDeps = {
   config: AppConfig;
   db?: Db;
-  codexRunner?: CodexRunner;
+  taskRunner?: TaskRunner;
+  codexRunner?: TaskRunner;
   codexAccountClient?: CodexAccountClient;
+  liveTaskEvents?: LiveTaskEvents;
+  taskQueue?: TaskQueue;
 };
 
 export function buildApp(deps: AppDeps) {
@@ -33,9 +40,12 @@ export function buildApp(deps: AppDeps) {
       }
     }
   });
-  const defaultCodex = deps.codexRunner && deps.codexAccountClient ? null : new CodexClient(deps.config);
-  const codexRunner = deps.codexRunner ?? (defaultCodex as CodexClient);
+  const providedTaskRunner = deps.taskRunner ?? deps.codexRunner;
+  const defaultCodex = providedTaskRunner && deps.codexAccountClient ? null : new CodexClient(deps.config);
+  const taskRunner = providedTaskRunner ?? (defaultCodex as CodexClient);
   const codexAccountClient = deps.codexAccountClient ?? (defaultCodex as CodexClient);
+  const liveTaskEvents = deps.liveTaskEvents ?? new LiveTaskEvents();
+  const taskQueue = deps.taskQueue ?? new TaskQueue();
 
   void app.register(sensible);
   app.setErrorHandler(installErrorHandler());
@@ -69,9 +79,10 @@ export function buildApp(deps: AppDeps) {
   void app.register(async (protectedApp) => {
     protectedApp.addHook("preHandler", authenticate);
     await protectedApp.register(reposRoutes);
+    await protectedApp.register(providersRoutes);
     await protectedApp.register(tokenRoutes, { db, config: deps.config });
     await protectedApp.register(codexAccountRoutes, { codex: codexAccountClient });
-    await protectedApp.register(taskRoutes, { db, codexRunner });
+    await protectedApp.register(taskRoutes, { db, taskRunner, taskQueue, liveTaskEvents });
   });
 
   return app;

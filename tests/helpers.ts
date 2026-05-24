@@ -3,8 +3,10 @@ import { openDatabase, type Db } from "../src/db/connection.js";
 import { migrate } from "../src/db/migrate.js";
 import { createApiToken } from "../src/auth/token.js";
 import type { AppConfig } from "../src/config.js";
-import type { CodexAccountClient, CodexAccountState, CodexRunner, CodexTaskResult, DeviceCodeLogin } from "../src/codex/client.js";
-import type { NewTaskEvent } from "../src/codex/task-events.js";
+import type { CodexAccountClient, CodexAccountState, DeviceCodeLogin } from "../src/codex/client.js";
+import type { NewTaskEvent } from "../src/tasks/task-events.js";
+import type { TaskRunner, TaskRunResult } from "../src/provider/task-runner.js";
+import type { LiveTaskEvents } from "../src/tasks/live-events.js";
 
 export const TEST_CONFIG: AppConfig = {
   NODE_ENV: "test",
@@ -19,7 +21,7 @@ export const TEST_CONFIG: AppConfig = {
   BOOTSTRAP_ADMIN_TOKEN: "bootstrap-secret"
 };
 
-export class FakeCodexRunner implements CodexRunner {
+export class FakeTaskRunner implements TaskRunner {
   calls: Array<{ prompt: string; cwd: string; mode: string }> = [];
   summary = "task completed";
   changedFiles: string[] = [];
@@ -31,7 +33,7 @@ export class FakeCodexRunner implements CodexRunner {
     threadId?: string;
     mode: "read-only" | "workspace-write";
     onEvent?: (event: NewTaskEvent) => void | Promise<void>;
-  }): Promise<CodexTaskResult> {
+  }): Promise<TaskRunResult> {
     this.calls.push(params);
     if (this.error) {
       throw this.error;
@@ -45,6 +47,8 @@ export class FakeCodexRunner implements CodexRunner {
     };
   }
 }
+
+export const FakeCodexRunner = FakeTaskRunner;
 
 export class FakeCodexAccountClient implements CodexAccountClient {
   account: CodexAccountState = {
@@ -83,18 +87,27 @@ export function makeTestDb(): Db {
   return db;
 }
 
-export function makeTestApp(options: { db?: Db; codexRunner?: CodexRunner; codexAccountClient?: CodexAccountClient } = {}) {
+export function makeTestApp(
+  options: {
+    db?: Db;
+    taskRunner?: TaskRunner;
+    codexRunner?: TaskRunner;
+    codexAccountClient?: CodexAccountClient;
+    liveTaskEvents?: LiveTaskEvents;
+  } = {}
+) {
   const db = options.db ?? makeTestDb();
-  const codexRunner = options.codexRunner ?? new FakeCodexRunner();
+  const taskRunner = options.taskRunner ?? options.codexRunner ?? new FakeTaskRunner();
   const codexAccountClient = options.codexAccountClient ?? new FakeCodexAccountClient();
   const app = buildApp({
     config: TEST_CONFIG,
     db,
-    codexRunner,
-    codexAccountClient
+    taskRunner,
+    codexAccountClient,
+    ...(options.liveTaskEvents ? { liveTaskEvents: options.liveTaskEvents } : {})
   });
 
-  return { app, db, codexRunner, codexAccountClient };
+  return { app, db, taskRunner, codexRunner: taskRunner, codexAccountClient };
 }
 
 export function issueToken(

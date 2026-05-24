@@ -18,7 +18,7 @@ export type TaskRecord = {
   repo: string;
   mode: string;
   threadId: string | null;
-  status: "pending" | "completed" | "failed";
+  status: "queued" | "pending" | "completed" | "failed";
   summary: string;
   changedFiles: string[];
   error: string | null;
@@ -27,6 +27,7 @@ export type TaskRecord = {
 };
 
 export type TaskEventType =
+  | "task.queued"
   | "task.started"
   | "task.completed"
   | "task.failed"

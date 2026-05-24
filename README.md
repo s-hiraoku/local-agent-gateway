@@ -116,6 +116,7 @@ Unauthenticated:
 Authenticated:
 
 - `GET /v1/repos` requires `task:read`; returns only repos covered by the caller's `repo:<repoId>` scopes.
+- `GET /v1/providers` requires `task:read`; returns available task provider IDs and public capabilities without backend internals.
 - `POST /v1/tokens` requires `token:create`; tokens cannot mint scopes they do not already have, and child tokens cannot outlive their issuer.
 - `GET /v1/tokens` requires `token:read`; never returns raw tokens or token hashes.
 - `DELETE /v1/tokens/:id` requires `token:revoke`; revokes without physical deletion.
@@ -124,6 +125,7 @@ Authenticated:
 - `POST /v1/codex/account/login/cancel` requires `codex:account:login`; cancels a pending device-code login by `loginId`.
 - `POST /v1/codex/account/logout` requires `codex:account:logout`; signs Codex out through App Server.
 - `POST /v1/tasks` requires `task:create`, `repo:<repoId>`, and `mode:<mode>`; returns `202 Accepted` with a Gateway `taskId`.
+- `GET /v1/tasks` requires `task:read`; lists sanitized tasks for repos covered by the caller's `repo:<repoId>` scopes, with optional `repo`, `status`, and `limit` filters.
 - `GET /v1/tasks/:id` allows the creating token to read its own task; other tokens require `task:read` and matching repo scope.
 - `GET /v1/tasks/:id/events` requires the same authorization as `GET /v1/tasks/:id`; replays sanitized task events as Server-Sent Events.
 - `GET /v1/tasks/:id/diff` requires the same authorization as `GET /v1/tasks/:id`; returns the stored sanitized generic diff artifact captured when the task completed.
@@ -141,10 +143,17 @@ curl -X POST http://127.0.0.1:8787/v1/tasks \
   }'
 ```
 
-Poll the Gateway task until it leaves `pending`:
+Poll the Gateway task until it leaves `queued` or `pending`:
 
 ```bash
 curl http://127.0.0.1:8787/v1/tasks/task_... \
+  -H "Authorization: Bearer $CODEXGW_TOKEN"
+```
+
+List recent completed tasks for a repo:
+
+```bash
+curl 'http://127.0.0.1:8787/v1/tasks?repo=local-agent-gateway&status=completed&limit=20' \
   -H "Authorization: Bearer $CODEXGW_TOKEN"
 ```
 
@@ -164,6 +173,7 @@ curl http://127.0.0.1:8787/v1/tasks/task_... \
 - Production config rejects the default pepper, rejects bootstrap admin token configuration, and requires an explicit repo allowlist.
 - Codex App Server is called through an internal stdio JSON-RPC transport with fixed server-side options: allowlisted working directory, fixed sandbox policy, `approvalPolicy: "never"`, and no network access.
 - Task runs use isolated App Server stdio connections so streamed turn events cannot cross between concurrent Gateway requests.
+- `workspace-write` tasks are serialized per repo by an in-process queue. `read-only` tasks can still run while a write task is active.
 - The gateway does not expose a generic App Server JSON-RPC proxy, App Server filesystem APIs, command APIs, or `thread/shellCommand`.
 - OpenAI API keys and ChatGPT access tokens are not accepted through public Gateway request bodies.
 - Public task responses expose Gateway `taskId` only, not Codex thread IDs.
@@ -186,6 +196,8 @@ curl http://127.0.0.1:8787/v1/tasks/task_.../diff \
 ```
 
 Events and stored diff artifacts use Gateway task IDs and repo-relative paths only. Raw `cwd`, Codex thread IDs, App Server JSON-RPC payloads, and shell commands are not exposed.
+
+For active tasks, the event endpoint keeps the SSE response open after replay and streams newly persisted Gateway events until the task reaches a terminal state. If the Gateway process restarts, clients should reconnect with `Last-Event-ID`; active in-memory fan-out is intentionally process-local.
 
 Prefer publishing through Tailscale, Cloudflare Tunnel, or another identity-aware private access layer. Opening a home Mac port directly to the internet is not recommended.
 

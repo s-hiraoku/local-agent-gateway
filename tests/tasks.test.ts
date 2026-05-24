@@ -1,6 +1,9 @@
 import { describe, expect, it } from "vitest";
 import type { FastifyInstance } from "fastify";
-import { authHeader, FakeCodexRunner, issueToken, makeTestApp } from "./helpers.js";
+import type { TaskEventRecord, TaskEventType } from "../src/db/schema.js";
+import { LiveTaskEvents } from "../src/tasks/live-events.js";
+import { appendTaskEvent } from "../src/tasks/task-events.js";
+import { authHeader, FakeTaskRunner, issueToken, makeTestApp, makeTestDb } from "./helpers.js";
 
 async function waitForTask(app: FastifyInstance, token: string, taskId: string) {
   for (let attempt = 0; attempt < 20; attempt += 1) {
@@ -10,7 +13,7 @@ async function waitForTask(app: FastifyInstance, token: string, taskId: string) 
       headers: authHeader(token)
     });
     const body = response.json();
-    if (body.status !== "pending") {
+    if (body.status === "completed" || body.status === "failed") {
       return body;
     }
     await new Promise((resolve) => setTimeout(resolve, 5));
@@ -18,10 +21,72 @@ async function waitForTask(app: FastifyInstance, token: string, taskId: string) 
   throw new Error("Timed out waiting for task completion");
 }
 
+async function waitForCondition(condition: () => boolean, message: string) {
+  for (let attempt = 0; attempt < 50; attempt += 1) {
+    if (condition()) {
+      return;
+    }
+    await new Promise((resolve) => setTimeout(resolve, 5));
+  }
+  throw new Error(message);
+}
+
+class BlockingTaskRunner extends FakeTaskRunner {
+  resolvers: Array<() => void> = [];
+
+  override async runTask(params: Parameters<FakeTaskRunner["runTask"]>[0]) {
+    this.calls.push(params);
+    await new Promise<void>((resolve) => {
+      this.resolvers.push(resolve);
+    });
+    return {
+      provider: "codex",
+      backend: "app-server",
+      threadId: "thr_test",
+      summary: this.summary,
+      changedFiles: this.changedFiles
+    };
+  }
+}
+
+class SubscribeInjectingLiveTaskEvents extends LiveTaskEvents {
+  constructor(private readonly onSubscribe: (taskId: string) => TaskEventRecord | null) {
+    super();
+  }
+
+  override subscribe(taskId: string, listener: (event: TaskEventRecord) => void): () => void {
+    const unsubscribe = super.subscribe(taskId, listener);
+    const event = this.onSubscribe(taskId);
+    if (event) {
+      listener(event);
+    }
+    return unsubscribe;
+  }
+}
+
+class StatusObservingLiveTaskEvents extends LiveTaskEvents {
+  terminalStatuses: string[] = [];
+
+  constructor(private readonly readStatus: (taskId: string) => string) {
+    super();
+  }
+
+  override publish(event: TaskEventRecord): void {
+    if (isTerminalEventType(event.type)) {
+      this.terminalStatuses.push(this.readStatus(event.taskId));
+    }
+    super.publish(event);
+  }
+}
+
+function isTerminalEventType(type: TaskEventType): boolean {
+  return type === "task.completed" || type === "task.failed";
+}
+
 describe("tasks", () => {
   it("accepts a read-only task and completes it in the background", async () => {
-    const runner = new FakeCodexRunner();
-    const { app, db } = makeTestApp({ codexRunner: runner });
+    const runner = new FakeTaskRunner();
+    const { app, db } = makeTestApp({ taskRunner: runner });
     const token = issueToken(db, ["task:create", "task:read", "repo:local-agent-gateway", "mode:read-only"]);
 
     const response = await app.inject({
@@ -104,10 +169,10 @@ describe("tasks", () => {
   });
 
   it("does not include local absolute paths in task responses", async () => {
-    const runner = new FakeCodexRunner();
+    const runner = new FakeTaskRunner();
     runner.summary =
       "Read /Users/name/project/README.md, /home/runner/work/repo/file.ts, /workspace/app/secret, C:\\Users\\name\\secret.txt, \\\\server\\share\\secret.txt, and /tmp/project/secret";
-    const { app, db } = makeTestApp({ codexRunner: runner });
+    const { app, db } = makeTestApp({ taskRunner: runner });
     const token = issueToken(db, ["task:create", "task:read", "repo:local-agent-gateway", "mode:read-only"]);
 
     const response = await app.inject({
@@ -133,9 +198,9 @@ describe("tasks", () => {
   });
 
   it("marks background task failures without leaking runner details through create", async () => {
-    const runner = new FakeCodexRunner();
+    const runner = new FakeTaskRunner();
     runner.error = new Error("failed at /Users/name/project/secret.txt");
-    const { app, db } = makeTestApp({ codexRunner: runner });
+    const { app, db } = makeTestApp({ taskRunner: runner });
     const token = issueToken(db, ["task:create", "task:read", "repo:local-agent-gateway", "mode:read-only"]);
 
     const response = await app.inject({
@@ -184,6 +249,59 @@ describe("tasks", () => {
     expect(readResponse.statusCode).toBe(200);
   });
 
+  it("lists authorized tasks without exposing internal ids", async () => {
+    const { app, db } = makeTestApp();
+    const token = issueToken(db, ["task:create", "task:read", "repo:local-agent-gateway", "mode:read-only"]);
+
+    const created = await app.inject({
+      method: "POST",
+      url: "/v1/tasks",
+      headers: authHeader(token.token),
+      payload: {
+        repo: "local-agent-gateway",
+        prompt: "Read README",
+        mode: "read-only"
+      }
+    });
+    const taskId = created.json().taskId as string;
+    await waitForTask(app, token.token, taskId);
+
+    const response = await app.inject({
+      method: "GET",
+      url: "/v1/tasks?repo=local-agent-gateway&status=completed&limit=10",
+      headers: authHeader(token.token)
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.json().tasks).toHaveLength(1);
+    expect(response.json().tasks[0]).toMatchObject({
+      taskId,
+      status: "completed",
+      repo: "local-agent-gateway"
+    });
+    expect(JSON.stringify(response.json())).not.toContain("thr_test");
+  });
+
+  it("requires task:read and repo scope for task listing", async () => {
+    const { app, db } = makeTestApp();
+    const withoutRead = issueToken(db, ["task:create", "repo:local-agent-gateway", "mode:read-only"]);
+    const withoutRepo = issueToken(db, ["task:read"], { name: "reader" });
+
+    const missingRead = await app.inject({
+      method: "GET",
+      url: "/v1/tasks",
+      headers: authHeader(withoutRead.token)
+    });
+    expect(missingRead.statusCode).toBe(403);
+
+    const missingRepo = await app.inject({
+      method: "GET",
+      url: "/v1/tasks?repo=local-agent-gateway",
+      headers: authHeader(withoutRepo.token)
+    });
+    expect(missingRepo.statusCode).toBe(403);
+  });
+
   it("rejects non-owners without task:read when reading a task", async () => {
     const { app, db } = makeTestApp();
     const owner = issueToken(db, ["task:create", "repo:local-agent-gateway", "mode:read-only"]);
@@ -212,9 +330,9 @@ describe("tasks", () => {
   });
 
   it("records append-only task lifecycle events", async () => {
-    const runner = new FakeCodexRunner();
+    const runner = new FakeTaskRunner();
     runner.changedFiles = ["README.md"];
-    const { app, db } = makeTestApp({ codexRunner: runner });
+    const { app, db } = makeTestApp({ taskRunner: runner });
     const token = issueToken(db, ["task:create", "task:read", "repo:local-agent-gateway", "mode:workspace-write"]);
 
     const response = await app.inject({
@@ -246,10 +364,199 @@ describe("tasks", () => {
     expect(JSON.parse(rows[2]?.payload_json ?? "{}")).toEqual({ changedFiles: ["README.md"] });
   });
 
+  it("queues workspace-write tasks per repo while allowing read-only tasks to run", async () => {
+    const runner = new BlockingTaskRunner();
+    const { app, db } = makeTestApp({ taskRunner: runner });
+    const token = issueToken(db, ["task:create", "task:read", "repo:local-agent-gateway", "mode:read-only", "mode:workspace-write"]);
+
+    const first = await app.inject({
+      method: "POST",
+      url: "/v1/tasks",
+      headers: authHeader(token.token),
+      payload: {
+        repo: "local-agent-gateway",
+        prompt: "First write",
+        mode: "workspace-write"
+      }
+    });
+    await waitForCondition(() => runner.calls.length === 1, "first write task did not start");
+
+    const second = await app.inject({
+      method: "POST",
+      url: "/v1/tasks",
+      headers: authHeader(token.token),
+      payload: {
+        repo: "local-agent-gateway",
+        prompt: "Second write",
+        mode: "workspace-write"
+      }
+    });
+    expect(second.statusCode).toBe(202);
+    expect(second.json().status).toBe("queued");
+    expect(runner.calls).toHaveLength(1);
+
+    const readOnly = await app.inject({
+      method: "POST",
+      url: "/v1/tasks",
+      headers: authHeader(token.token),
+      payload: {
+        repo: "local-agent-gateway",
+        prompt: "Read while write is active",
+        mode: "read-only"
+      }
+    });
+    expect(readOnly.statusCode).toBe(202);
+    await waitForCondition(() => runner.calls.length === 2, "read-only task did not run while write was active");
+
+    runner.resolvers[0]?.();
+    await waitForCondition(() => runner.calls.length === 3, "queued write task did not start");
+    const queuedTask = await app.inject({
+      method: "GET",
+      url: `/v1/tasks/${second.json().taskId as string}`,
+      headers: authHeader(token.token)
+    });
+    expect(queuedTask.json().status).toBe("pending");
+
+    runner.resolvers[1]?.();
+    runner.resolvers[2]?.();
+    await waitForTask(app, token.token, first.json().taskId as string);
+    await waitForTask(app, token.token, second.json().taskId as string);
+    await waitForTask(app, token.token, readOnly.json().taskId as string);
+  });
+
+  it("streams live task events until a pending task completes", async () => {
+    const runner = new BlockingTaskRunner();
+    const { app, db } = makeTestApp({ taskRunner: runner });
+    const token = issueToken(db, ["task:create", "task:read", "repo:local-agent-gateway", "mode:read-only"]);
+
+    const created = await app.inject({
+      method: "POST",
+      url: "/v1/tasks",
+      headers: authHeader(token.token),
+      payload: {
+        repo: "local-agent-gateway",
+        prompt: "Long read",
+        mode: "read-only"
+      }
+    });
+    const taskId = created.json().taskId as string;
+    await waitForCondition(() => runner.calls.length === 1, "task did not start");
+
+    const eventsPromise = app.inject({
+      method: "GET",
+      url: `/v1/tasks/${taskId}/events`,
+      headers: authHeader(token.token)
+    });
+    await new Promise((resolve) => setTimeout(resolve, 5));
+    runner.resolvers[0]?.();
+    const response = await eventsPromise;
+
+    expect(response.statusCode).toBe(200);
+    expect(response.body).toContain("event: task.started");
+    expect(response.body).toContain("event: task.completed");
+    expect(response.body).toContain(`"taskId":"${taskId}"`);
+  });
+
+  it("keeps persisted replay events ordered when live events arrive during SSE replay", async () => {
+    const runner = new BlockingTaskRunner();
+    const db = makeTestDb();
+    let injected = false;
+    const liveTaskEvents = new SubscribeInjectingLiveTaskEvents((taskId) => {
+      if (injected) {
+        return null;
+      }
+      injected = true;
+      return appendTaskEvent(db, taskId, {
+        type: "agent.message.completed",
+        payload: { text: "live during replay" }
+      });
+    });
+    const { app } = makeTestApp({ db, taskRunner: runner, liveTaskEvents });
+    const token = issueToken(db, ["task:create", "task:read", "repo:local-agent-gateway", "mode:read-only"]);
+
+    const created = await app.inject({
+      method: "POST",
+      url: "/v1/tasks",
+      headers: authHeader(token.token),
+      payload: {
+        repo: "local-agent-gateway",
+        prompt: "Long read",
+        mode: "read-only"
+      }
+    });
+    const taskId = created.json().taskId as string;
+    await waitForCondition(() => runner.calls.length === 1, "task did not start");
+
+    const eventsPromise = app.inject({
+      method: "GET",
+      url: `/v1/tasks/${taskId}/events`,
+      headers: authHeader(token.token)
+    });
+    await new Promise((resolve) => setTimeout(resolve, 5));
+    runner.resolvers[0]?.();
+    const response = await eventsPromise;
+
+    expect(response.statusCode).toBe(200);
+    expect(response.body.indexOf("event: task.started")).toBeGreaterThan(-1);
+    expect(response.body.indexOf("event: agent.message.completed")).toBeGreaterThan(
+      response.body.indexOf("event: task.started")
+    );
+  });
+
+  it("publishes terminal events only after the task row is terminal", async () => {
+    const db = makeTestDb();
+    const liveTaskEvents = new StatusObservingLiveTaskEvents((taskId) => {
+      const row = db.prepare("SELECT status FROM tasks WHERE id = ?").get(taskId) as { status: string };
+      return row.status;
+    });
+    const { app } = makeTestApp({ db, liveTaskEvents });
+    const token = issueToken(db, ["task:create", "task:read", "repo:local-agent-gateway", "mode:read-only"]);
+
+    const created = await app.inject({
+      method: "POST",
+      url: "/v1/tasks",
+      headers: authHeader(token.token),
+      payload: {
+        repo: "local-agent-gateway",
+        prompt: "Read README",
+        mode: "read-only"
+      }
+    });
+    await waitForTask(app, token.token, created.json().taskId as string);
+
+    expect(liveTaskEvents.terminalStatuses).toEqual(["completed"]);
+  });
+
+  it("publishes failed events only after the task row is failed", async () => {
+    const db = makeTestDb();
+    const runner = new FakeTaskRunner();
+    runner.error = new Error("failed");
+    const liveTaskEvents = new StatusObservingLiveTaskEvents((taskId) => {
+      const row = db.prepare("SELECT status FROM tasks WHERE id = ?").get(taskId) as { status: string };
+      return row.status;
+    });
+    const { app } = makeTestApp({ db, taskRunner: runner, liveTaskEvents });
+    const token = issueToken(db, ["task:create", "task:read", "repo:local-agent-gateway", "mode:read-only"]);
+
+    const created = await app.inject({
+      method: "POST",
+      url: "/v1/tasks",
+      headers: authHeader(token.token),
+      payload: {
+        repo: "local-agent-gateway",
+        prompt: "Fail",
+        mode: "read-only"
+      }
+    });
+    await waitForTask(app, token.token, created.json().taskId as string);
+
+    expect(liveTaskEvents.terminalStatuses).toEqual(["failed"]);
+  });
+
   it("records failed task events with sanitized public payloads", async () => {
-    const runner = new FakeCodexRunner();
+    const runner = new FakeTaskRunner();
     runner.error = new Error("failed in /Users/name/project/secret.txt");
-    const { app, db } = makeTestApp({ codexRunner: runner });
+    const { app, db } = makeTestApp({ taskRunner: runner });
     const token = issueToken(db, ["task:create", "task:read", "repo:local-agent-gateway", "mode:read-only"]);
 
     const response = await app.inject({
@@ -276,9 +583,9 @@ describe("tasks", () => {
   });
 
   it("replays task events as authorized SSE without internal ids or raw cwd", async () => {
-    const runner = new FakeCodexRunner();
+    const runner = new FakeTaskRunner();
     runner.summary = "Read /Volumes/SSD/secret/repo/file.ts";
-    const { app, db } = makeTestApp({ codexRunner: runner });
+    const { app, db } = makeTestApp({ taskRunner: runner });
     const token = issueToken(db, ["task:create", "task:read", "repo:local-agent-gateway", "mode:read-only"]);
 
     const created = await app.inject({
@@ -382,9 +689,9 @@ describe("tasks", () => {
   });
 
   it("returns an authorized task diff artifact without internal ids or raw cwd", async () => {
-    const runner = new FakeCodexRunner();
+    const runner = new FakeTaskRunner();
     runner.changedFiles = ["README.md", "/Users/name/project/secret.txt", "../outside.txt"];
-    const { app, db } = makeTestApp({ codexRunner: runner });
+    const { app, db } = makeTestApp({ taskRunner: runner });
     const token = issueToken(db, ["task:create", "task:read", "repo:local-agent-gateway", "mode:workspace-write"]);
 
     const created = await app.inject({
@@ -426,9 +733,9 @@ describe("tasks", () => {
   });
 
   it("treats diff artifact changed files as literal paths", async () => {
-    const runner = new FakeCodexRunner();
+    const runner = new FakeTaskRunner();
     runner.changedFiles = [":(glob)**/*.ts"];
-    const { app, db } = makeTestApp({ codexRunner: runner });
+    const { app, db } = makeTestApp({ taskRunner: runner });
     const token = issueToken(db, ["task:create", "task:read", "repo:local-agent-gateway", "mode:workspace-write"]);
 
     const created = await app.inject({
@@ -456,13 +763,13 @@ describe("tasks", () => {
       changedFiles: [":(glob)**/*.ts"],
       patch: ""
     });
-    expect(JSON.stringify(response.json())).not.toContain("src/codex/diff-artifacts.ts");
+    expect(JSON.stringify(response.json())).not.toContain("src/tasks/diff-artifacts.ts");
   });
 
   it("serves stored diff artifacts instead of reading the live task row at request time", async () => {
-    const runner = new FakeCodexRunner();
+    const runner = new FakeTaskRunner();
     runner.changedFiles = ["README.md"];
-    const { app, db } = makeTestApp({ codexRunner: runner });
+    const { app, db } = makeTestApp({ taskRunner: runner });
     const token = issueToken(db, ["task:create", "task:read", "repo:local-agent-gateway", "mode:workspace-write"]);
 
     const created = await app.inject({
