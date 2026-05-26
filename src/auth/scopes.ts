@@ -4,6 +4,8 @@ import { TASK_MODES } from "../policy/modes.js";
 export const STATIC_SCOPES = [
   "task:create",
   "task:read",
+  "task:control",
+  "audit:read",
   "thread:create",
   "thread:write",
   "token:create",

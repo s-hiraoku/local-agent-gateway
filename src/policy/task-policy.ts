@@ -36,3 +36,12 @@ export function authorizeTaskRead(request: FastifyRequest, task: { tokenId: stri
   requireScopes(request, ["task:read"]);
   requireScopes(request, [`repo:${task.repo}`]);
 }
+
+export function authorizeTaskControl(request: FastifyRequest, task: { tokenId: string; repo: string }): void {
+  if (request.auth?.id === task.tokenId) {
+    return;
+  }
+
+  requireScopes(request, ["task:read", "task:control"]);
+  requireScopes(request, [`repo:${task.repo}`]);
+}

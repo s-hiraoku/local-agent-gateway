@@ -3,6 +3,7 @@ import type { FastifyInstance } from "fastify";
 import type { TaskEventRecord, TaskEventType } from "../src/db/schema.js";
 import { LiveTaskEvents } from "../src/tasks/live-events.js";
 import { appendTaskEvent } from "../src/tasks/task-events.js";
+import { TaskQueue } from "../src/tasks/task-queue.js";
 import { authHeader, FakeTaskRunner, issueToken, makeTestApp, makeTestDb } from "./helpers.js";
 
 async function waitForTask(app: FastifyInstance, token: string, taskId: string) {
@@ -33,11 +34,22 @@ async function waitForCondition(condition: () => boolean, message: string) {
 
 class BlockingTaskRunner extends FakeTaskRunner {
   resolvers: Array<() => void> = [];
+  interruptCount = 0;
+  steeredMessages: string[] = [];
 
   override async runTask(params: Parameters<FakeTaskRunner["runTask"]>[0]) {
     this.calls.push(params);
     await new Promise<void>((resolve) => {
       this.resolvers.push(resolve);
+      params.onControlHandle?.({
+        interrupt: () => {
+          this.interruptCount += 1;
+          resolve();
+        },
+        steer: (message) => {
+          this.steeredMessages.push(message);
+        }
+      });
     });
     return {
       provider: "codex",
@@ -422,6 +434,93 @@ describe("tasks", () => {
     await waitForTask(app, token.token, first.json().taskId as string);
     await waitForTask(app, token.token, second.json().taskId as string);
     await waitForTask(app, token.token, readOnly.json().taskId as string);
+  });
+
+  it("limits parallel read-only tasks with a queue", async () => {
+    const runner = new BlockingTaskRunner();
+    const { app, db } = makeTestApp({ taskRunner: runner, taskQueue: new TaskQueue(1) });
+    const token = issueToken(db, ["task:create", "task:read", "repo:local-agent-gateway", "mode:read-only"]);
+
+    const first = await app.inject({
+      method: "POST",
+      url: "/v1/tasks",
+      headers: authHeader(token.token),
+      payload: {
+        repo: "local-agent-gateway",
+        prompt: "First read",
+        mode: "read-only"
+      }
+    });
+    await waitForCondition(() => runner.calls.length === 1, "first read task did not start");
+
+    const second = await app.inject({
+      method: "POST",
+      url: "/v1/tasks",
+      headers: authHeader(token.token),
+      payload: {
+        repo: "local-agent-gateway",
+        prompt: "Second read",
+        mode: "read-only"
+      }
+    });
+    expect(second.statusCode).toBe(202);
+    expect(second.json().status).toBe("queued");
+    expect(runner.calls).toHaveLength(1);
+
+    runner.resolvers[0]?.();
+    await waitForCondition(() => runner.calls.length === 2, "queued read task did not start");
+
+    const queuedTask = await app.inject({
+      method: "GET",
+      url: `/v1/tasks/${second.json().taskId as string}`,
+      headers: authHeader(token.token)
+    });
+    expect(queuedTask.json().status).toBe("pending");
+
+    runner.resolvers[1]?.();
+    await waitForTask(app, token.token, first.json().taskId as string);
+    await waitForTask(app, token.token, second.json().taskId as string);
+  });
+
+  it("fails incomplete tasks on startup because prompts and runner handles are not persisted", async () => {
+    const runner = new BlockingTaskRunner();
+    const db = makeTestDb();
+    const firstApp = makeTestApp({ db, taskRunner: runner }).app;
+    const token = issueToken(db, ["task:create", "task:read", "repo:local-agent-gateway", "mode:workspace-write"]);
+
+    const created = await firstApp.inject({
+      method: "POST",
+      url: "/v1/tasks",
+      headers: authHeader(token.token),
+      payload: {
+        repo: "local-agent-gateway",
+        prompt: "Long write",
+        mode: "workspace-write"
+      }
+    });
+    await waitForCondition(() => runner.calls.length === 1, "write task did not start");
+    await firstApp.close();
+
+    const secondApp = makeTestApp({ db, taskRunner: new FakeTaskRunner() }).app;
+    const response = await secondApp.inject({
+      method: "GET",
+      url: `/v1/tasks/${created.json().taskId as string}`,
+      headers: authHeader(token.token)
+    });
+    expect(response.json()).toMatchObject({
+      status: "failed",
+      error: "Task did not complete before Gateway startup"
+    });
+
+    const events = db
+      .prepare("SELECT type, payload_json FROM task_events WHERE task_id = ? ORDER BY id ASC")
+      .all(created.json().taskId) as Array<{ type: string; payload_json: string }>;
+    expect(events.at(-1)?.type).toBe("task.failed");
+    expect(JSON.parse(events.at(-1)?.payload_json ?? "{}")).toEqual({
+      error: "Task did not complete before Gateway startup",
+      recovery: "startup"
+    });
+    await secondApp.close();
   });
 
   it("streams live task events until a pending task completes", async () => {
@@ -838,9 +937,10 @@ describe("tasks", () => {
     expect(otherResponse.statusCode).toBe(403);
   });
 
-  it("does not expose task interrupt or steer endpoints before active session support exists", async () => {
-    const { app, db } = makeTestApp();
-    const token = issueToken(db, ["task:create", "task:read", "repo:local-agent-gateway", "mode:read-only"]);
+  it("interrupts an active task through the process-local session registry", async () => {
+    const runner = new BlockingTaskRunner();
+    const { app, db } = makeTestApp({ taskRunner: runner });
+    const token = issueToken(db, ["task:create", "repo:local-agent-gateway", "mode:read-only"]);
 
     const created = await app.inject({
       method: "POST",
@@ -853,27 +953,170 @@ describe("tasks", () => {
       }
     });
     expect(created.statusCode).toBe(202);
-    const taskId = created.json().taskId as unknown;
-    expect(taskId).toEqual(expect.any(String));
-    expect(taskId).not.toBe("");
+    const taskId = created.json().taskId as string;
+    await waitForCondition(() => runner.calls.length === 1, "task did not start");
 
     const interruptResponse = await app.inject({
       method: "POST",
-      url: `/v1/tasks/${taskId as string}/interrupt`,
+      url: `/v1/tasks/${taskId}/interrupt`,
       headers: authHeader(token.token),
       payload: {}
     });
 
-    const steerResponse = await app.inject({
+    expect(interruptResponse.statusCode).toBe(200);
+    expect(interruptResponse.json()).toEqual({ taskId, interrupted: true });
+    expect(runner.interruptCount).toBe(1);
+    await waitForTask(app, token.token, taskId);
+
+    const rows = db.prepare("SELECT type FROM task_events WHERE task_id = ? ORDER BY id ASC").all(taskId) as Array<{
+      type: string;
+    }>;
+    expect(rows.map((row) => row.type)).toContain("task.interrupted");
+  });
+
+  it("steers an active task without storing the steering text in audit logs", async () => {
+    const runner = new BlockingTaskRunner();
+    const { app, db } = makeTestApp({ taskRunner: runner });
+    const token = issueToken(db, ["task:create", "task:read", "repo:local-agent-gateway", "mode:read-only"]);
+    const message = "Please adjust course toward tests";
+
+    const created = await app.inject({
       method: "POST",
-      url: `/v1/tasks/${taskId as string}/steer`,
+      url: "/v1/tasks",
       headers: authHeader(token.token),
       payload: {
-        message: "Please adjust course"
+        repo: "local-agent-gateway",
+        prompt: "Read README",
+        mode: "read-only"
+      }
+    });
+    expect(created.statusCode).toBe(202);
+    const taskId = created.json().taskId as string;
+    await waitForCondition(() => runner.calls.length === 1, "task did not start");
+
+    const steerResponse = await app.inject({
+      method: "POST",
+      url: `/v1/tasks/${taskId}/steer`,
+      headers: authHeader(token.token),
+      payload: {
+        message
       }
     });
 
-    expect(interruptResponse.statusCode).toBe(404);
-    expect(steerResponse.statusCode).toBe(404);
+    expect(steerResponse.statusCode).toBe(200);
+    expect(steerResponse.json()).toEqual({ taskId, steered: true });
+    expect(runner.steeredMessages).toEqual([message]);
+
+    const event = db.prepare("SELECT payload_json FROM task_events WHERE task_id = ? AND type = 'task.steered'").get(taskId) as {
+      payload_json: string;
+    };
+    expect(event.payload_json).toContain(`[prompt omitted; length=${message.length}]`);
+    expect(event.payload_json).not.toContain(message);
+
+    const audit = db.prepare("SELECT prompt_hash, prompt_preview FROM audit_logs WHERE action = 'tasks:steer'").get() as {
+      prompt_hash: string;
+      prompt_preview: string;
+    };
+    expect(audit.prompt_hash).toHaveLength(64);
+    expect(audit.prompt_preview).toBe(`[prompt omitted; length=${message.length}]`);
+    expect(audit.prompt_preview).not.toBe(message);
+
+    runner.resolvers[0]?.();
+    await waitForTask(app, token.token, taskId);
+  });
+
+  it("requires task control scope for non-owner task steering", async () => {
+    const runner = new BlockingTaskRunner();
+    const { app, db } = makeTestApp({ taskRunner: runner });
+    const owner = issueToken(db, ["task:create", "repo:local-agent-gateway", "mode:read-only"]);
+    const reader = issueToken(db, ["task:read", "repo:local-agent-gateway"], { name: "reader" });
+    const controller = issueToken(db, ["task:read", "task:control", "repo:local-agent-gateway"], { name: "controller" });
+
+    const created = await app.inject({
+      method: "POST",
+      url: "/v1/tasks",
+      headers: authHeader(owner.token),
+      payload: {
+        repo: "local-agent-gateway",
+        prompt: "Read README",
+        mode: "read-only"
+      }
+    });
+    const taskId = created.json().taskId as string;
+    await waitForCondition(() => runner.calls.length === 1, "task did not start");
+
+    const missingControl = await app.inject({
+      method: "POST",
+      url: `/v1/tasks/${taskId}/steer`,
+      headers: authHeader(reader.token),
+      payload: { message: "No control scope" }
+    });
+    expect(missingControl.statusCode).toBe(403);
+
+    const allowed = await app.inject({
+      method: "POST",
+      url: `/v1/tasks/${taskId}/steer`,
+      headers: authHeader(controller.token),
+      payload: { message: "Allowed steering" }
+    });
+    expect(allowed.statusCode).toBe(200);
+    expect(runner.steeredMessages).toEqual(["Allowed steering"]);
+
+    runner.resolvers[0]?.();
+    await waitForTask(app, owner.token, taskId);
+  });
+
+  it("rejects task control for queued or finished tasks", async () => {
+    const runner = new BlockingTaskRunner();
+    const { app, db } = makeTestApp({ taskRunner: runner });
+    const token = issueToken(db, ["task:create", "task:read", "repo:local-agent-gateway", "mode:workspace-write"]);
+
+    const first = await app.inject({
+      method: "POST",
+      url: "/v1/tasks",
+      headers: authHeader(token.token),
+      payload: {
+        repo: "local-agent-gateway",
+        prompt: "First write",
+        mode: "workspace-write"
+      }
+    });
+    await waitForCondition(() => runner.calls.length === 1, "first task did not start");
+
+    const queued = await app.inject({
+      method: "POST",
+      url: "/v1/tasks",
+      headers: authHeader(token.token),
+      payload: {
+        repo: "local-agent-gateway",
+        prompt: "Queued write",
+        mode: "workspace-write"
+      }
+    });
+    expect(queued.json().status).toBe("queued");
+
+    const queuedInterrupt = await app.inject({
+      method: "POST",
+      url: `/v1/tasks/${queued.json().taskId as string}/interrupt`,
+      headers: authHeader(token.token),
+      payload: {}
+    });
+    expect(queuedInterrupt.statusCode).toBe(409);
+    expect(queuedInterrupt.json().error.code).toBe("CONFLICT");
+
+    runner.resolvers[0]?.();
+    await waitForTask(app, token.token, first.json().taskId as string);
+    await waitForCondition(() => runner.calls.length === 2, "queued task did not start");
+    runner.resolvers[1]?.();
+    await waitForTask(app, token.token, queued.json().taskId as string);
+
+    const finishedInterrupt = await app.inject({
+      method: "POST",
+      url: `/v1/tasks/${first.json().taskId as string}/interrupt`,
+      headers: authHeader(token.token),
+      payload: {}
+    });
+    expect(finishedInterrupt.statusCode).toBe(409);
+    expect(finishedInterrupt.json().error.code).toBe("CONFLICT");
   });
 });

@@ -8,6 +8,7 @@ import { appendTaskEvent } from "./task-events.js";
 import { captureTaskDiffArtifact } from "./diff-artifacts.js";
 import type { LiveTaskEvents } from "./live-events.js";
 import type { InitialTaskStatus, TaskQueue } from "./task-queue.js";
+import type { ActiveTaskSessions } from "./active-sessions.js";
 
 type TaskRow = {
   id: string;
@@ -55,6 +56,7 @@ export function createTask(
     mode: TaskMode;
     id?: string;
     liveEvents?: LiveTaskEvents;
+    activeSessions?: ActiveTaskSessions;
   }
 ): TaskRecord {
   const initialStatus = queue.initialStatus(params.repoId, params.mode);
@@ -107,22 +109,32 @@ async function runTask(
   runner: TaskRunner,
   id: string,
   params: {
+    tokenId: string;
     repoId: string;
     cwd: string;
     prompt: string;
     mode: TaskMode;
     liveEvents?: LiveTaskEvents;
+    activeSessions?: ActiveTaskSessions;
   }
 ): Promise<void> {
   let sawAgentMessage = false;
   let sawDiffUpdate = false;
+  let activeSession: ReturnType<ActiveTaskSessions["register"]> | null = null;
 
   try {
     markTaskStarted(db, id, params.repoId, params.mode, params.liveEvents);
+    activeSession = params.activeSessions?.register({
+      taskId: id,
+      tokenId: params.tokenId,
+      repo: params.repoId,
+      mode: params.mode
+    }) ?? null;
     const result = await runner.runTask({
       prompt: params.prompt,
       cwd: params.cwd,
       mode: params.mode,
+      onControlHandle: (handle) => activeSession?.attachHandle(handle),
       onEvent: (event) => {
         if (event.type === "agent.message.completed") {
           sawAgentMessage = true;
@@ -182,6 +194,8 @@ async function runTask(
       type: "task.failed",
       payload: { error: publicError }
     });
+  } finally {
+    activeSession?.complete();
   }
 }
 
@@ -247,4 +261,36 @@ export function listTasks(
     )
     .all(values) as TaskRow[];
   return rows.map(parseTaskRow);
+}
+
+export function failIncompleteTasksOnStartup(db: Db): number {
+  const tasks = db
+    .prepare("SELECT * FROM tasks WHERE status IN ('queued', 'pending') ORDER BY created_at ASC, id ASC")
+    .all() as TaskRow[];
+  if (tasks.length === 0) {
+    return 0;
+  }
+
+  const completedAt = nowIso();
+  const error = "Task did not complete before Gateway startup";
+  const update = db.prepare(
+    `UPDATE tasks
+     SET status = 'failed',
+         error = @error,
+         completed_at = @completedAt
+     WHERE id = @id AND status IN ('queued', 'pending')`
+  );
+
+  const failTask = db.transaction((rows: TaskRow[]) => {
+    for (const row of rows) {
+      update.run({ id: row.id, error, completedAt });
+      appendTaskEvent(db, row.id, {
+        type: "task.failed",
+        payload: { error, recovery: "startup" }
+      });
+    }
+  });
+
+  failTask(tasks);
+  return tasks.length;
 }

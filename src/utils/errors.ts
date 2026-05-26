@@ -5,6 +5,7 @@ export const ERROR_CODES = [
   "UNAUTHORIZED",
   "FORBIDDEN",
   "NOT_FOUND",
+  "CONFLICT",
   "VALIDATION_ERROR",
   "TOKEN_EXPIRED",
   "TOKEN_REVOKED",
@@ -21,6 +22,7 @@ const STATUS_BY_CODE: Record<ErrorCode, number> = {
   UNAUTHORIZED: 401,
   FORBIDDEN: 403,
   NOT_FOUND: 404,
+  CONFLICT: 409,
   VALIDATION_ERROR: 400,
   TOKEN_EXPIRED: 401,
   TOKEN_REVOKED: 401,
@@ -51,6 +53,8 @@ export function defaultMessage(code: ErrorCode): string {
       return "Forbidden";
     case "NOT_FOUND":
       return "Not found";
+    case "CONFLICT":
+      return "Conflict";
     case "VALIDATION_ERROR":
       return "Validation error";
     case "TOKEN_EXPIRED":

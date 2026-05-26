@@ -17,6 +17,9 @@ import { taskRoutes } from "./routes/tasks.js";
 import { codexAccountRoutes } from "./routes/codex-account.js";
 import { LiveTaskEvents } from "./tasks/live-events.js";
 import { TaskQueue } from "./tasks/task-queue.js";
+import { ActiveTaskSessions } from "./tasks/active-sessions.js";
+import { auditLogRoutes } from "./routes/audit-logs.js";
+import { failIncompleteTasksOnStartup } from "./tasks/tasks.js";
 
 export type AppDeps = {
   config: AppConfig;
@@ -26,11 +29,13 @@ export type AppDeps = {
   codexAccountClient?: CodexAccountClient;
   liveTaskEvents?: LiveTaskEvents;
   taskQueue?: TaskQueue;
+  activeTaskSessions?: ActiveTaskSessions;
 };
 
 export function buildApp(deps: AppDeps) {
   const db = deps.db ?? openDatabase(deps.config.DATABASE_PATH);
   migrate(db);
+  failIncompleteTasksOnStartup(db);
 
   const app = Fastify({
     logger: {
@@ -45,7 +50,8 @@ export function buildApp(deps: AppDeps) {
   const taskRunner = providedTaskRunner ?? (defaultCodex as CodexClient);
   const codexAccountClient = deps.codexAccountClient ?? (defaultCodex as CodexClient);
   const liveTaskEvents = deps.liveTaskEvents ?? new LiveTaskEvents();
-  const taskQueue = deps.taskQueue ?? new TaskQueue();
+  const taskQueue = deps.taskQueue ?? new TaskQueue(deps.config.CODEXGW_MAX_PARALLEL_READ_TASKS);
+  const activeTaskSessions = deps.activeTaskSessions ?? new ActiveTaskSessions();
 
   void app.register(sensible);
   app.setErrorHandler(installErrorHandler());
@@ -81,8 +87,9 @@ export function buildApp(deps: AppDeps) {
     await protectedApp.register(reposRoutes);
     await protectedApp.register(providersRoutes);
     await protectedApp.register(tokenRoutes, { db, config: deps.config });
+    await protectedApp.register(auditLogRoutes, { db });
     await protectedApp.register(codexAccountRoutes, { codex: codexAccountClient });
-    await protectedApp.register(taskRoutes, { db, taskRunner, taskQueue, liveTaskEvents });
+    await protectedApp.register(taskRoutes, { db, taskRunner, taskQueue, liveTaskEvents, activeTaskSessions });
   });
 
   return app;

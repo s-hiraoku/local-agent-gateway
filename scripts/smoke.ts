@@ -22,6 +22,7 @@ const config: AppConfig = {
   APP_BACKEND: "codex-app-server",
   CODEX_APP_SERVER_COMMAND: "codex",
   CODEX_APP_SERVER_TURN_TIMEOUT_MS: 1_000,
+  CODEXGW_MAX_PARALLEL_READ_TASKS: 4,
   CODEXGW_ALLOWED_REPOS_JSON: JSON.stringify([smokeRepo]),
   TOKEN_PEPPER: "smoke-test-pepper",
   BOOTSTRAP_ADMIN_TOKEN: "smoke-bootstrap-token"

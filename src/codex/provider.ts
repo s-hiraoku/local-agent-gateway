@@ -9,8 +9,8 @@ export const CODEX_PROVIDER_DESCRIPTOR = {
     streamEvents: true,
     diffArtifacts: true,
     accountAuth: true,
-    cancel: false,
-    steer: false,
+    cancel: true,
+    steer: true,
     models: false
   }
 } as const satisfies TaskProviderDescriptor;
