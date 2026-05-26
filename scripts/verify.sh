@@ -54,6 +54,23 @@ run_python_checks() {
   fi
 }
 
+run_policy_docs_check() {
+  local missing=0
+
+  for required_doc in policy_template.md docs/QUALITY.md; do
+    if [[ ! -s "${required_doc}" ]]; then
+      echo "Required policy document missing or empty: ${required_doc}"
+      missing=1
+    fi
+  done
+
+  if [[ "${missing}" -ne 0 ]]; then
+    return 1
+  fi
+
+  echo "Policy documentation check passed"
+}
+
 main() {
   local detected=0
 
@@ -79,6 +96,8 @@ main() {
       mark_missing_check "mkdocs.yml detected, but mkdocs was not available"
     fi
   fi
+
+  run_policy_docs_check
 
   if [[ "${detected}" -eq 0 ]]; then
     mark_missing_check "No project-specific verification detected"

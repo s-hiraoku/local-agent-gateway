@@ -97,15 +97,11 @@ Diff artifact capture:
 
 The response should be a generic task artifact, not editor-specific UI state.
 
-## Interrupt And Steer Design
-
-Candidate endpoints:
+## Interrupt And Steer
 
 ```text
 POST /v1/tasks/:id/interrupt
 POST /v1/tasks/:id/steer
 ```
 
-These should be generic task control APIs. They require an active task session registry because the current runner owns the App Server transport until `runTask()` finishes and then closes isolated stdio transports.
-
-Do not implement these endpoints until the Gateway can safely retain and authorize active session handles. See [`TASK_CONTROL.md`](TASK_CONTROL.md) for the dedicated control API guardrails.
+These generic task control APIs operate on the active task session registry. They do not accept workspace paths, raw `cwd`, Codex thread IDs, or Codex turn IDs from clients. See [`TASK_CONTROL.md`](TASK_CONTROL.md) for the dedicated control API guardrails.

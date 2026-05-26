@@ -1,49 +1,15 @@
 # Task Control
 
-Task control covers future `interrupt` and `steer` operations for active Gateway tasks.
+Task control covers `interrupt` and `steer` operations for active Gateway tasks.
 
-This repository does not currently expose task control endpoints. The current task runner hands an isolated Codex App Server stdio transport to one `runTask()` call and closes that transport when the task completes. There is no retained active session handle that can safely receive control messages after the public task has been created.
-
-## Candidate APIs
-
-These endpoints are reserved for a future phase:
+## Public APIs
 
 ```text
 POST /v1/tasks/:id/interrupt
 POST /v1/tasks/:id/steer
 ```
 
-They should remain unimplemented until the Gateway has an active task session registry.
-
-## Required Session Model
-
-A safe implementation needs server-side state that maps a Gateway `taskId` to an active session handle. That handle must never be a Codex internal thread ID exposed to clients.
-
-The registry should track:
-
-- Gateway `taskId`
-- owning token ID
-- repo ID
-- task mode
-- task status
-- cancellable runner/session handle
-- creation and completion timestamps
-
-The registry must be process-local unless persistence and recovery semantics are explicitly designed. If the Gateway restarts, active controls should fail closed rather than attempting to recover hidden Codex internals from public input.
-
-## Authorization
-
-Authorization should match `GET /v1/tasks/:id` before any control-specific checks:
-
-- the creating token can control its own active task;
-- a different token requires `task:read` plus `repo:<task.repo>`;
-- future write/control scopes may be added, but they must not weaken repo or ownership checks.
-
-Control APIs should only operate on active tasks. Completed or failed tasks should return a deterministic conflict-style error once that error code exists.
-
-## Steer Payload
-
-Future `steer` should accept a small, structured body such as:
+`interrupt` accepts an empty JSON object. `steer` accepts:
 
 ```json
 {
@@ -51,22 +17,45 @@ Future `steer` should accept a small, structured body such as:
 }
 ```
 
-The message should use the same prompt handling discipline as task creation:
+`message` must be 1 to 2,000 characters. Unknown fields are rejected.
 
-- do not store full steering text in audit logs;
-- store hashes or omitted previews only;
-- scrub public event payloads;
-- reject secrets and oversized bodies through validation.
+## Session Model
 
-## Public Events
+The Gateway keeps a process-local active task session registry. It maps Gateway `taskId` values to internal runner control handles. The handle owns the Codex App Server `turn/interrupt` and `turn/steer` calls and never exposes Codex thread IDs, turn IDs, raw `cwd`, or raw JSON-RPC payloads to clients.
 
-If implemented, task control should append normalized events:
+The registry tracks enough server-side context to authorize and clean up an active task:
 
-- `approval.resolved` only for approval-like decisions;
-- `task.failed` if an interrupt causes failure;
-- a future `task.interrupted` or `task.steered` event only after it is added to the public event schema.
+- Gateway `taskId`
+- owning token ID
+- repo ID
+- task mode
+- runner/session control handle
 
-Raw Codex App Server JSON-RPC payloads must not be stored or replayed.
+If the Gateway process restarts, active controls fail closed with `CONFLICT` during the restart window. On startup, any stale `queued` or `pending` task rows are marked `failed` because the Gateway does not persist prompts or runner handles. Clients cannot recover control by submitting hidden Codex IDs.
+
+## Authorization
+
+Authorization matches task ownership before control-specific checks:
+
+- the creating token can control its own active task;
+- a different token requires `task:read`, `task:control`, and `repo:<task.repo>`.
+
+Control APIs only operate on `pending` tasks with an active in-process control handle. `queued`, `completed`, `failed`, and post-restart tasks return `CONFLICT`.
+
+## Audit And Events
+
+Control requests append normalized events:
+
+- `task.interrupted` after an interrupt request is accepted by the active handle;
+- `task.steered` after a steer request is accepted by the active handle.
+
+If an interrupt later causes the runner to fail, the normal terminal `task.failed` event is still emitted. If the runner exits cleanly, the normal `task.completed` event is emitted.
+
+Steering text follows the same storage discipline as task creation:
+
+- audit logs store a hash and omitted preview only;
+- task events store an omitted preview only;
+- full steering text is sent to the active runner handle but is not persisted.
 
 ## APIs Not To Add
 
@@ -79,5 +68,3 @@ Do not add any of the following as shortcuts for task control:
 - generic App Server JSON-RPC proxying;
 - request bodies that contain Codex internal thread IDs;
 - request bodies that contain OpenAI API keys, ChatGPT access tokens, refresh tokens, or session secrets.
-
-Until the active session model exists, `POST /v1/tasks/:id/interrupt` and `POST /v1/tasks/:id/steer` should continue to be absent from the public API surface.
