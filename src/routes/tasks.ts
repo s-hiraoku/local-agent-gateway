@@ -5,9 +5,9 @@ import type { TaskEventType, TaskRecord } from "../db/schema.js";
 import type { Db } from "../db/connection.js";
 import type { TaskRunner } from "../provider/task-runner.js";
 import { createTask, getTask, listTasks } from "../tasks/tasks.js";
-import { listTaskEvents, publicTaskEvent } from "../tasks/task-events.js";
+import { appendTaskEvent, listTaskEvents, publicTaskEvent } from "../tasks/task-events.js";
 import { getTaskDiffArtifact } from "../tasks/diff-artifacts.js";
-import { authorizeTaskCreate, authorizeTaskRead } from "../policy/task-policy.js";
+import { authorizeTaskControl, authorizeTaskCreate, authorizeTaskRead } from "../policy/task-policy.js";
 import { listAllowedReposForScopes } from "../policy/repos.js";
 import { requireScopes } from "../auth/authorize.js";
 import { ApiError } from "../utils/errors.js";
@@ -16,9 +16,11 @@ import { makeId } from "../utils/ids.js";
 import { sanitizePublicText } from "../utils/sanitize.js";
 import type { LiveTaskEvents } from "../tasks/live-events.js";
 import type { TaskQueue } from "../tasks/task-queue.js";
+import type { ActiveTaskSessions } from "../tasks/active-sessions.js";
 
 const createTaskSchema = z.object({
   repo: z.string().min(1).max(100),
+  provider: z.string().min(1).max(100).regex(/^[A-Za-z0-9._-]+$/).optional(),
   prompt: z.string().min(1).max(20_000),
   mode: z.enum(["read-only", "workspace-write"]).optional()
 }).strict();
@@ -29,6 +31,10 @@ const listTasksQuerySchema = z.object({
   limit: z.coerce.number().int().min(1).max(100).default(50)
 }).strict();
 
+const steerTaskSchema = z.object({
+  message: z.string().min(1).max(2_000)
+}).strict();
+
 function previewPrompt(prompt: string): string {
   return `[prompt omitted; length=${prompt.length}]`;
 }
@@ -37,6 +43,7 @@ function taskResponse(task: TaskRecord) {
   return {
     taskId: task.id,
     status: task.status,
+    provider: task.provider,
     repo: task.repo,
     mode: task.mode,
     summary: sanitizePublicText(task.summary),
@@ -49,13 +56,23 @@ function taskResponse(task: TaskRecord) {
 
 export async function taskRoutes(
   app: FastifyInstance,
-  deps: { db: Db; taskRunner: TaskRunner; taskQueue: TaskQueue; liveTaskEvents: LiveTaskEvents }
+  deps: {
+    db: Db;
+    taskRunners: Record<string, TaskRunner>;
+    taskQueue: TaskQueue;
+    liveTaskEvents: LiveTaskEvents;
+    activeTaskSessions: ActiveTaskSessions;
+  }
 ) {
   app.post("/v1/tasks", async (request, reply) => {
     request.audit = { ...request.audit, action: "tasks:create" };
 
     const body = createTaskSchema.parse(request.body);
-    const { repo, mode } = authorizeTaskCreate(request, body.repo, body.mode);
+    const { repo, mode, provider } = authorizeTaskCreate(request, body.repo, body.mode, body.provider);
+    const taskRunner = deps.taskRunners[provider.id];
+    if (!taskRunner) {
+      throw new ApiError("PROVIDER_NOT_ALLOWED");
+    }
     request.audit = {
       ...request.audit,
       repo: repo.id,
@@ -71,14 +88,16 @@ export async function taskRoutes(
     const taskId = makeId("task");
     request.audit = { ...request.audit, taskId };
 
-    const task = createTask(deps.db, deps.taskRunner, deps.taskQueue, {
+    const task = createTask(deps.db, taskRunner, deps.taskQueue, {
       id: taskId,
       tokenId: request.auth.id,
       repoId: repo.id,
       cwd: repo.path,
       prompt: body.prompt,
       mode,
-      liveEvents: deps.liveTaskEvents
+      providerId: provider.id,
+      liveEvents: deps.liveTaskEvents,
+      activeSessions: deps.activeTaskSessions
     });
     return reply.status(202).send(taskResponse(task));
   });
@@ -198,6 +217,60 @@ export async function taskRoutes(
     return getTaskDiffArtifact(deps.db, task);
   });
 
+  app.post("/v1/tasks/:id/interrupt", async (request) => {
+    request.audit = { ...request.audit, action: "tasks:interrupt" };
+    z.object({}).strict().parse(request.body ?? {});
+    const params = z.object({ id: z.string().min(1) }).parse(request.params);
+    const task = getTask(deps.db, params.id);
+    if (!task) {
+      throw new ApiError("NOT_FOUND");
+    }
+
+    request.audit = { ...request.audit, repo: task.repo, mode: task.mode, taskId: task.id };
+    authorizeTaskControl(request, task);
+    assertTaskControlAvailable(task, deps.activeTaskSessions);
+
+    const interrupted = await deps.activeTaskSessions.interrupt(task.id);
+    if (!interrupted) {
+      throw new ApiError("CONFLICT", "Task control is not available yet");
+    }
+    appendAndPublishControlEvent(deps, task.id, { type: "task.interrupted", payload: {} });
+
+    return { taskId: task.id, interrupted: true };
+  });
+
+  app.post("/v1/tasks/:id/steer", async (request) => {
+    request.audit = { ...request.audit, action: "tasks:steer" };
+    const body = steerTaskSchema.parse(request.body);
+    const params = z.object({ id: z.string().min(1) }).parse(request.params);
+    const task = getTask(deps.db, params.id);
+    if (!task) {
+      throw new ApiError("NOT_FOUND");
+    }
+
+    request.audit = {
+      ...request.audit,
+      repo: task.repo,
+      mode: task.mode,
+      taskId: task.id,
+      promptHash: hashPrompt(body.message),
+      promptPreview: previewPrompt(body.message)
+    };
+    authorizeTaskControl(request, task);
+    assertTaskControlAvailable(task, deps.activeTaskSessions);
+
+    const steered = await deps.activeTaskSessions.steer(task.id, body.message);
+    if (!steered) {
+      throw new ApiError("CONFLICT", "Task control is not available yet");
+    }
+    appendAndPublishControlEvent(deps, task.id, {
+      type: "task.steered",
+      payload: { messagePreview: previewPrompt(body.message) }
+    });
+
+    return { taskId: task.id, steered: true };
+  });
+
   app.get("/v1/tasks/:id", async (request) => {
     request.audit = { ...request.audit, action: "tasks:read" };
     const params = z.object({ id: z.string().min(1) }).parse(request.params);
@@ -232,4 +305,19 @@ function isTerminalTask(task: TaskRecord): boolean {
 
 function isTerminalEventType(type: TaskEventType): boolean {
   return type === "task.completed" || type === "task.failed";
+}
+
+function assertTaskControlAvailable(task: TaskRecord, activeTaskSessions: ActiveTaskSessions): void {
+  if (task.status !== "pending" || !activeTaskSessions.hasActive(task.id)) {
+    throw new ApiError("CONFLICT", "Task is not active");
+  }
+}
+
+function appendAndPublishControlEvent(
+  deps: { db: Db; liveTaskEvents: LiveTaskEvents },
+  taskId: string,
+  event: Parameters<typeof appendTaskEvent>[2]
+) {
+  const record = appendTaskEvent(deps.db, taskId, event);
+  deps.liveTaskEvents.publish(record);
 }

@@ -8,7 +8,7 @@ OpenAI's Codex App Server WebSocket transport is documented as experimental and 
 
 ## User Guide
 
-The GitHub Pages-ready user guide lives in [`docs/index.md`](docs/index.md). Pages is deployed by `.github/workflows/pages.yml` whenever `main` changes the docs or the workflow.
+The GitHub Pages-ready user guide lives in [`docs/index.md`](docs/index.md). Operational quality gates are in [`docs/QUALITY.md`](docs/QUALITY.md), and the Codex-facing repository policy template is [`policy_template.md`](policy_template.md). Pages is deployed by `.github/workflows/pages.yml` whenever `main` changes the docs or the workflow.
 
 ## Development
 
@@ -30,7 +30,8 @@ cp .env.example .env
 ```
 
 Set `CODEXGW_ALLOWED_REPOS_JSON` to the repos this gateway may operate on, and set a long random `TOKEN_PEPPER`. `BOOTSTRAP_ADMIN_TOKEN` is only for local bootstrap and is refused in production.
-By default the gateway starts `codex app-server` using `CODEX_APP_SERVER_COMMAND=codex`.
+By default the gateway starts `codex app-server` using `CODEX_APP_SERVER_COMMAND=codex`. Set `CODEX_APP_SERVER_MODEL` when the local Codex config points at a model that is not supported by the authenticated account or installed CLI.
+Set `CODEXGW_MAX_PARALLEL_READ_TASKS` to bound concurrent read-only Codex runs; the default is `4`.
 
 Example repo allowlist:
 
@@ -89,6 +90,8 @@ curl -X POST http://127.0.0.1:8787/v1/tokens \
     "scopes": [
       "task:create",
       "task:read",
+      "task:control",
+      "audit:read",
       "thread:create",
       "thread:write",
       "token:create",
@@ -99,7 +102,8 @@ curl -X POST http://127.0.0.1:8787/v1/tokens \
       "codex:account:logout",
       "repo:local-agent-gateway",
       "mode:read-only",
-      "mode:workspace-write"
+      "mode:workspace-write",
+      "provider:codex"
     ],
     "expiresInDays": 90
   }'
@@ -124,11 +128,14 @@ Authenticated:
 - `POST /v1/codex/account/login/device-code` requires `codex:account:login`; starts ChatGPT device-code login and returns only `loginId`, `verificationUrl`, and `userCode`.
 - `POST /v1/codex/account/login/cancel` requires `codex:account:login`; cancels a pending device-code login by `loginId`.
 - `POST /v1/codex/account/logout` requires `codex:account:logout`; signs Codex out through App Server.
-- `POST /v1/tasks` requires `task:create`, `repo:<repoId>`, and `mode:<mode>`; returns `202 Accepted` with a Gateway `taskId`.
+- `POST /v1/tasks` requires `task:create`, `repo:<repoId>`, and `mode:<mode>`; optional `provider` defaults to `codex`. Non-default providers require `provider:<providerId>`. Returns `202 Accepted` with a Gateway `taskId`.
 - `GET /v1/tasks` requires `task:read`; lists sanitized tasks for repos covered by the caller's `repo:<repoId>` scopes, with optional `repo`, `status`, and `limit` filters.
 - `GET /v1/tasks/:id` allows the creating token to read its own task; other tokens require `task:read` and matching repo scope.
 - `GET /v1/tasks/:id/events` requires the same authorization as `GET /v1/tasks/:id`; replays sanitized task events as Server-Sent Events.
 - `GET /v1/tasks/:id/diff` requires the same authorization as `GET /v1/tasks/:id`; returns the stored sanitized generic diff artifact captured when the task completed.
+- `POST /v1/tasks/:id/interrupt` controls only active tasks. The creating token can interrupt its own task; other tokens require `task:read`, `task:control`, and matching repo scope.
+- `POST /v1/tasks/:id/steer` accepts `{ "message": "..." }` for active tasks with the same control authorization. Steering text is not stored in full in audit logs or events.
+- `GET /v1/audit-logs` requires `audit:read`; lists sanitized audit records with optional `action`, `repo`, `status`, `taskId`, and `limit` filters.
 
 Task example:
 
@@ -138,6 +145,7 @@ curl -X POST http://127.0.0.1:8787/v1/tasks \
   -H "Content-Type: application/json" \
   -d '{
     "repo": "local-agent-gateway",
+    "provider": "codex",
     "prompt": "READMEを読んで改善案を出してください",
     "mode": "read-only"
   }'
@@ -163,6 +171,7 @@ curl 'http://127.0.0.1:8787/v1/tasks?repo=local-agent-gateway&status=completed&l
 - Repositories resolve only through the server-side allowlist in `CODEXGW_ALLOWED_REPOS_JSON`; production startup refuses a missing allowlist.
 - Default task mode is `read-only`.
 - Public task modes are only `read-only` and `workspace-write`.
+- Public task providers are selected by registered provider IDs. The default provider is `codex`; future non-default providers require explicit `provider:<providerId>` scopes.
 - Per-repo mode ceilings prevent sensitive repos from being made writeable by scope composition alone.
 - `danger-full-access` is not accepted.
 - No arbitrary shell execution endpoint exists.
@@ -174,9 +183,11 @@ curl 'http://127.0.0.1:8787/v1/tasks?repo=local-agent-gateway&status=completed&l
 - Codex App Server is called through an internal stdio JSON-RPC transport with fixed server-side options: allowlisted working directory, fixed sandbox policy, `approvalPolicy: "never"`, and no network access.
 - Task runs use isolated App Server stdio connections so streamed turn events cannot cross between concurrent Gateway requests.
 - `workspace-write` tasks are serialized per repo by an in-process queue. `read-only` tasks can still run while a write task is active.
+- `read-only` tasks are capped by `CODEXGW_MAX_PARALLEL_READ_TASKS`; excess tasks are queued in process.
 - The gateway does not expose a generic App Server JSON-RPC proxy, App Server filesystem APIs, command APIs, or `thread/shellCommand`.
 - OpenAI API keys and ChatGPT access tokens are not accepted through public Gateway request bodies.
 - Public task responses expose Gateway `taskId` only, not Codex thread IDs.
+- Task control and queues use process-local handles. On startup, any previously `queued` or `pending` tasks are marked failed because prompts and runner handles are not persisted.
 
 ## Client Integration
 

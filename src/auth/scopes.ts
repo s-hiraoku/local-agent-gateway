@@ -1,9 +1,12 @@
 import { allowedRepoIds } from "../policy/repos.js";
 import { TASK_MODES } from "../policy/modes.js";
+import { taskProviderIds } from "../provider/registry.js";
 
 export const STATIC_SCOPES = [
   "task:create",
   "task:read",
+  "task:control",
+  "audit:read",
   "thread:create",
   "thread:write",
   "token:create",
@@ -15,7 +18,7 @@ export const STATIC_SCOPES = [
 ] as const;
 
 export type StaticScope = (typeof STATIC_SCOPES)[number];
-export type Scope = StaticScope | `repo:${string}` | `mode:${string}`;
+export type Scope = StaticScope | `repo:${string}` | `mode:${string}` | `provider:${string}`;
 
 export function isValidScope(scope: string): boolean {
   if ((STATIC_SCOPES as readonly string[]).includes(scope)) {
@@ -30,6 +33,10 @@ export function isValidScope(scope: string): boolean {
     return (TASK_MODES as readonly string[]).includes(scope.slice("mode:".length));
   }
 
+  if (scope.startsWith("provider:")) {
+    return taskProviderIds().includes(scope.slice("provider:".length));
+  }
+
   return false;
 }
 
@@ -37,7 +44,8 @@ export function allBootstrapScopes(): string[] {
   return [
     ...STATIC_SCOPES,
     ...allowedRepoIds().map((id) => `repo:${id}`),
-    ...TASK_MODES.map((mode) => `mode:${mode}`)
+    ...TASK_MODES.map((mode) => `mode:${mode}`),
+    ...taskProviderIds().map((id) => `provider:${id}`)
   ];
 }
 

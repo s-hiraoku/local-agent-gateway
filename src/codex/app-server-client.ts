@@ -2,7 +2,7 @@ import { relative, resolve, sep } from "node:path";
 import type { AppConfig } from "../config.js";
 import type { NewTaskEvent } from "../tasks/task-events.js";
 import type { TaskMode } from "../policy/modes.js";
-import type { TaskRunner, TaskRunResult } from "../provider/task-runner.js";
+import type { TaskControlHandle, TaskRunner, TaskRunResult } from "../provider/task-runner.js";
 import { ApiError } from "../utils/errors.js";
 import { sanitizePublicText } from "../utils/sanitize.js";
 import { StdioJsonRpcTransport, type JsonRpcNotification, type JsonRpcTransport } from "./json-rpc.js";
@@ -82,7 +82,7 @@ export class CodexAppServerClient implements TaskRunner, CodexAccountClient {
   constructor(config: AppConfig, options: CodexAppServerOptions = {}) {
     this.configuredTransport = options.transport;
     this.command = options.command ?? config.CODEX_APP_SERVER_COMMAND;
-    this.args = options.args ?? ["app-server"];
+    this.args = options.args ?? appServerArgs(config.CODEX_APP_SERVER_MODEL);
     this.env = {
       ...process.env,
       PATH: process.env.PATH ?? "",
@@ -122,7 +122,9 @@ export class CodexAppServerClient implements TaskRunner, CodexAccountClient {
     cwd: string;
     threadId?: string;
     mode: TaskMode;
+    providerId?: string;
     onEvent?: (event: NewTaskEvent) => void | Promise<void>;
+    onControlHandle?: (handle: TaskControlHandle) => void;
   }): Promise<TaskRunResult> {
     const transport = this.configuredTransport ?? this.createTransport();
     try {
@@ -152,7 +154,9 @@ export class CodexAppServerClient implements TaskRunner, CodexAccountClient {
       cwd: string;
       threadId?: string;
       mode: TaskMode;
+      providerId?: string;
       onEvent?: (event: NewTaskEvent) => void | Promise<void>;
+      onControlHandle?: (handle: TaskControlHandle) => void;
     }
   ): Promise<TaskRunResult> {
     const threadResult = params.threadId
@@ -185,6 +189,15 @@ export class CodexAppServerClient implements TaskRunner, CodexAccountClient {
     if (!turnId) {
       throw new ApiError("CODEX_EXECUTION_FAILED", "Codex app-server did not return a turn id");
     }
+    params.onControlHandle?.({
+      interrupt: () => this.safeRequest(transport, "turn/interrupt", { threadId, turnId }),
+      steer: (message) =>
+        this.safeRequest(transport, "turn/steer", {
+          threadId,
+          input: [{ type: "text", text: message }],
+          expectedTurnId: turnId
+        })
+    });
 
     const collected = await this.collectTurn(transport, params.cwd, turnId, params.onEvent);
     return {
@@ -267,6 +280,12 @@ export class CodexAppServerClient implements TaskRunner, CodexAccountClient {
         if (turn?.status === "failed") {
           throw new ApiError("CODEX_EXECUTION_FAILED", sanitizePublicText(turn.error?.message ?? "Codex turn failed"));
         }
+        if (turn?.status === "interrupted") {
+          return {
+            summary: finalSummary || latestSummary || "Task interrupted",
+            changedFiles: [...changedFiles].sort()
+          };
+        }
         return {
           summary: finalSummary || latestSummary,
           changedFiles: [...changedFiles].sort()
@@ -297,6 +316,13 @@ export class CodexAppServerClient implements TaskRunner, CodexAccountClient {
 }
 
 export class CodexClient extends CodexAppServerClient {}
+
+function appServerArgs(model: string | undefined): string[] {
+  if (!model) {
+    return ["app-server"];
+  }
+  return ["app-server", "-c", `model=${JSON.stringify(model)}`];
+}
 
 function toAppServerSandbox(mode: TaskMode): "read-only" | "workspace-write" {
   return mode === "workspace-write" ? "workspace-write" : "read-only";

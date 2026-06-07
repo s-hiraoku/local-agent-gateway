@@ -9,12 +9,19 @@ export type TaskRunResult = {
   changedFiles: string[];
 };
 
+export type TaskControlHandle = {
+  interrupt: () => Promise<void> | void;
+  steer: (message: string) => Promise<void> | void;
+};
+
 export interface TaskRunner {
   runTask(params: {
     prompt: string;
     cwd: string;
     threadId?: string;
     mode: TaskMode;
+    providerId?: string;
     onEvent?: (event: NewTaskEvent) => void | Promise<void>;
+    onControlHandle?: (handle: TaskControlHandle) => void;
   }): Promise<TaskRunResult>;
 }

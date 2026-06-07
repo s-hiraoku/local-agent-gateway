@@ -9,10 +9,12 @@ External clients can include CLI tools, web dashboards, desktop apps, mobile app
 - Fastify exposes the authenticated Gateway API.
 - Codex App Server runs only as an internal stdio JSON-RPC process.
 - Repositories are selected by public repo IDs and resolved through the server-side allowlist.
+- Task providers are selected by registered public provider IDs. The default is `codex`; non-default providers require explicit `provider:<providerId>` scopes.
 - Public task APIs expose Gateway `taskId`; Codex internal thread IDs and raw `cwd` values stay server-side.
-- Tokens are scoped by operation, repo, and task mode.
+- Tokens are scoped by operation, repo, task mode, and non-default provider use.
 - Audit logs store prompt hashes and omitted prompt previews, not full prompts.
 - Public text fields are scrubbed for common absolute local path patterns.
+- Startup marks stale `queued` or `pending` tasks as failed because prompts and active runner handles are not durable.
 
 ## Existing API Compatibility
 
@@ -23,6 +25,9 @@ The following API shapes remain stable unless a breaking change is explicitly re
 - `POST /v1/tasks`
 - `GET /v1/tasks`
 - `GET /v1/tasks/:id`
+- `POST /v1/tasks/:id/interrupt`
+- `POST /v1/tasks/:id/steer`
+- `GET /v1/audit-logs`
 - token management APIs
 - Codex account APIs
 
@@ -36,9 +41,12 @@ Implemented in G1:
 - `GET /v1/tasks` for authorized task listing with repo, status, and limit filters.
 - `GET /v1/tasks/:id/events` as an authenticated Server-Sent Events replay and live event endpoint.
 - Per-repo in-process serialization for `workspace-write` tasks; `read-only` tasks remain parallel.
+- Configurable `read-only` concurrency with `CODEXGW_MAX_PARALLEL_READ_TASKS`.
 - Minimal normalized Gateway domain events:
   - `task.queued`
   - `task.started`
+  - `task.interrupted`
+  - `task.steered`
   - `agent.message.completed`
   - `file.changed`
   - `diff.available`
@@ -48,6 +56,16 @@ Implemented in G1:
 - A minimal `npm run smoke` check that loads the built app and verifies `GET /healthz`.
 
 Existing task polling responses do not expose Codex internal IDs or raw paths. Task status can now be `queued`, `pending`, `completed`, or `failed`.
+
+## Provider Selection
+
+Implemented provider contract:
+
+- `GET /v1/providers` returns public provider IDs and capabilities only.
+- `POST /v1/tasks` accepts optional `provider`; omitted means `codex`.
+- Unknown providers, registered providers without a connected runner, or provider/mode capability mismatches fail closed.
+- Non-default providers require `provider:<providerId>` in addition to `task:create`, `repo:<repoId>`, and `mode:<mode>`.
+- Gateway events and task responses may include public provider IDs, but never backend names, raw transports, or provider-native session IDs.
 
 ## Diff Artifacts
 
@@ -62,20 +80,23 @@ Implemented after G1:
 
 Clients cannot pass raw paths, shell commands, git arguments, or workspace roots to this endpoint.
 
+## Task Control And Audit Logs
+
+Implemented after diff artifacts:
+
+- `POST /v1/tasks/:id/interrupt` controls only active process-local task sessions.
+- `POST /v1/tasks/:id/steer` accepts a small `{ "message": "..." }` body for active sessions.
+- The creating token can control its own task. A different token requires `task:read`, `task:control`, and `repo:<task.repo>`.
+- Control requests append sanitized `task.interrupted` or `task.steered` events.
+- `GET /v1/audit-logs` requires `audit:read` and returns sanitized records with optional filters.
+
+These APIs still do not expose Codex internal thread IDs, turn IDs, raw `cwd`, or raw App Server payloads. Steering text is not stored in full.
+
 ## Workspace Targets
 
 Workspace targets remain design-only. `POST /v1/tasks` accepts the current `repo` field only; `workspaceId`, `workspacePath`, raw `cwd`, and other target shortcuts are rejected by strict validation. `/v1/workspaces` endpoints are absent until a server-side registry can resolve opaque IDs to allowlisted internal paths without exposing raw filesystem locations.
 
-## Candidate Future APIs
-
-These APIs are suitable future additions if they preserve the same security model:
-
-- `POST /v1/tasks/:id/interrupt`
-- `POST /v1/tasks/:id/steer`
-
-`interrupt` and `steer` require active task session management. The current runner waits for completion inside one `runTask()` call, so these endpoints should not be implemented until active session handles can be retained safely.
-
-See [`TASK_CONTROL.md`](TASK_CONTROL.md) for the guardrails and required session model.
+See [`TASK_CONTROL.md`](TASK_CONTROL.md) for the control API guardrails and session model. See [`QUALITY.md`](QUALITY.md) for operational quality gates and known limits.
 
 ## APIs Not To Implement
 

@@ -22,7 +22,7 @@ Each event uses the Gateway event ID and normalized event type:
 ```text
 id: 12
 event: task.completed
-data: {"id":"12","taskId":"task_...","type":"task.completed","payload":{"summary":"Task completed"},"createdAt":"..."}
+data: {"id":"12","taskId":"task_...","type":"task.completed","payload":{"provider":"codex","summary":"Task completed"},"createdAt":"..."}
 ```
 
 Public event data contains:
@@ -32,6 +32,8 @@ Public event data contains:
 - `type`: normalized event type.
 - `payload`: sanitized event payload.
 - `createdAt`: event timestamp.
+
+Payloads may contain public provider IDs such as `codex`. They must not contain backend names, raw transports, or provider-native session IDs.
 
 Public event data must not contain:
 
@@ -47,6 +49,8 @@ The initial type set is intentionally small and client-neutral:
 
 - `task.queued`
 - `task.started`
+- `task.interrupted`
+- `task.steered`
 - `task.completed`
 - `task.failed`
 - `agent.message.delta`
@@ -62,6 +66,8 @@ G1 persists these events when available:
 
 - `task.queued`
 - `task.started`
+- `task.interrupted`
+- `task.steered`
 - `agent.message.completed`
 - `file.changed`
 - `diff.available`
@@ -76,6 +82,8 @@ Codex App Server stream notifications are mapped inside the Gateway before persi
 | --- | --- |
 | write task inserted behind an active write task for the same repo | `task.queued` |
 | runner starts executing the task | `task.started` |
+| accepted interrupt request | `task.interrupted` |
+| accepted steer request | `task.steered` |
 | `item/completed` with `agentMessage` | `agent.message.completed` |
 | `item/completed` with completed file changes | `file.changed`, then `diff.available` |
 | runner result / turn completed successfully | `task.completed` |
@@ -97,3 +105,5 @@ curl http://127.0.0.1:8787/v1/tasks/task_.../events \
 Responses include a `retry: 2000` SSE directive so clients have a default reconnect interval. For non-terminal tasks, a closed connection means the client should reconnect with `Last-Event-ID` to catch up.
 
 Live fan-out is process-local. It does not expose Codex internal thread IDs or session handles, and it does not imply that task control APIs are available. If the Gateway restarts, active live subscriptions are lost, but persisted events remain replayable.
+
+On startup, the Gateway marks stale `queued` or `pending` tasks as `failed` and appends a `task.failed` event with a startup recovery payload. Clients should treat this as terminal and create a new task if the work still needs to run.

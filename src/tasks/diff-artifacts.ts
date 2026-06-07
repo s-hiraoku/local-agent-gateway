@@ -115,7 +115,7 @@ async function gitDiff(repoId: string, changedFiles: readonly string[]): Promise
     const repo = getAllowedRepo(repoId);
     const result = await execFileAsync(
       "git",
-      ["-C", repo.path, "diff", "--no-ext-diff", "--", ...changedFiles],
+      ["-C", repo.path, "diff", "--no-ext-diff", "HEAD", "--", ...changedFiles],
       {
         encoding: "utf8",
         maxBuffer: GIT_DIFF_MAX_BUFFER_BYTES,

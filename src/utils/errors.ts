@@ -5,10 +5,12 @@ export const ERROR_CODES = [
   "UNAUTHORIZED",
   "FORBIDDEN",
   "NOT_FOUND",
+  "CONFLICT",
   "VALIDATION_ERROR",
   "TOKEN_EXPIRED",
   "TOKEN_REVOKED",
   "REPO_NOT_ALLOWED",
+  "PROVIDER_NOT_ALLOWED",
   "MODE_NOT_ALLOWED",
   "CODEX_NOT_CONFIGURED",
   "CODEX_EXECUTION_FAILED",
@@ -21,10 +23,12 @@ const STATUS_BY_CODE: Record<ErrorCode, number> = {
   UNAUTHORIZED: 401,
   FORBIDDEN: 403,
   NOT_FOUND: 404,
+  CONFLICT: 409,
   VALIDATION_ERROR: 400,
   TOKEN_EXPIRED: 401,
   TOKEN_REVOKED: 401,
   REPO_NOT_ALLOWED: 403,
+  PROVIDER_NOT_ALLOWED: 403,
   MODE_NOT_ALLOWED: 403,
   CODEX_NOT_CONFIGURED: 501,
   CODEX_EXECUTION_FAILED: 500,
@@ -51,6 +55,8 @@ export function defaultMessage(code: ErrorCode): string {
       return "Forbidden";
     case "NOT_FOUND":
       return "Not found";
+    case "CONFLICT":
+      return "Conflict";
     case "VALIDATION_ERROR":
       return "Validation error";
     case "TOKEN_EXPIRED":
@@ -59,6 +65,8 @@ export function defaultMessage(code: ErrorCode): string {
       return "Token revoked";
     case "REPO_NOT_ALLOWED":
       return "Repository is not allowed";
+    case "PROVIDER_NOT_ALLOWED":
+      return "Provider is not allowed";
     case "MODE_NOT_ALLOWED":
       return "Mode is not allowed";
     case "CODEX_NOT_CONFIGURED":

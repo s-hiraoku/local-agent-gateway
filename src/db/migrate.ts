@@ -85,6 +85,12 @@ export function migrate(db: Db): void {
 
     CREATE INDEX IF NOT EXISTS idx_audit_logs_task_id
       ON audit_logs(task_id);
+
+    CREATE INDEX IF NOT EXISTS idx_audit_logs_timestamp
+      ON audit_logs(timestamp);
+
+    CREATE INDEX IF NOT EXISTS idx_audit_logs_action
+      ON audit_logs(action);
   `);
 
   addColumnIfMissing(db, "tasks", "provider", "TEXT NOT NULL DEFAULT 'codex'");

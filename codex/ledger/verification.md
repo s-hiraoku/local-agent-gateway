@@ -194,3 +194,45 @@ Use this file to record meaningful verification runs.
 - Scope: Workspace target guardrails
 - Result: Passed
 - Notes: Added regression coverage for rejecting workspace target request fields and keeping `/v1/workspaces` endpoints absent until a server-side registry exists.
+
+### 2026-05-25 06:56
+
+- Command: `npm run lint`, `npm run typecheck`, `npm test`, `npm run build`, `scripts/verify.sh`
+- Scope: Active task control and audit log API
+- Result: Passed
+- Notes: Added process-local task control handles, interrupt/steer endpoints, audit log listing, docs, and regression coverage. Full suite reports 65 Vitest tests.
+
+### 2026-05-26 08:18
+
+- Command: `node --input-type=module -e '<live Codex App Server steer/interrupt smoke>'`
+- Scope: Real Codex App Server task control
+- Result: Passed
+- Notes: Verified live `turn/steer` and `turn/interrupt` through `CodexAppServerClient` with `CODEX_APP_SERVER_MODEL=gpt-5.4-mini`; both completed with no changed files. An initial run without a model override exposed a local default model/account mismatch, so `CODEX_APP_SERVER_MODEL` was added to make Gateway runs reproducible.
+
+### 2026-05-26 08:18
+
+- Command: `npm run lint`, `npm run typecheck`, `npm test`, `npm run build`, `scripts/verify.sh`
+- Scope: Model override hardening after live control smoke
+- Result: Passed
+- Notes: Full suite reports 66 Vitest tests after adding `CODEX_APP_SERVER_MODEL` config, docs, and `.env.example` coverage.
+
+### 2026-05-27 07:34
+
+- Command: `npx vitest run tests/config.test.ts tests/tasks.test.ts`
+- Scope: Operational readiness task lifecycle changes
+- Result: Passed
+- Notes: Targeted coverage for read-only queueing, startup stale task failure, and new config validation. Targeted run reports 34 Vitest tests.
+
+### 2026-05-27 07:34
+
+- Command: `npm run lint`, `npm run typecheck`, `npm test`, `npm run build`, `npm run smoke`, `scripts/verify.sh`
+- Scope: Practical local operation and quality policy documentation
+- Result: Passed
+- Notes: Full suite reports 69 Vitest tests. `scripts/verify.sh` now also checks that `policy_template.md` and `docs/QUALITY.md` are present.
+
+### 2026-06-08 00:13
+
+- Command: `npm rebuild better-sqlite3`, `npx vitest run tests/authorize.test.ts tests/auth.test.ts tests/tasks.test.ts tests/providers.test.ts`, `npm run typecheck`, `npm run lint`, `npm run build`, `npm test`, `npm run smoke`, `scripts/verify.sh`
+- Scope: Task provider selection groundwork for future non-Codex agent integrations
+- Result: Passed
+- Notes: Rebuilt the local native sqlite dependency after a Node ABI mismatch. Targeted provider/auth/task coverage passed, full suite reports 71 Vitest tests, smoke passed with the existing Node `module.register()` deprecation warning, and repository verification completed.

@@ -29,6 +29,8 @@ export type TaskRecord = {
 export type TaskEventType =
   | "task.queued"
   | "task.started"
+  | "task.interrupted"
+  | "task.steered"
   | "task.completed"
   | "task.failed"
   | "agent.message.delta"

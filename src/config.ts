@@ -8,7 +8,9 @@ const configSchema = z.object({
   DATABASE_PATH: z.string().default("./data/local-agent-gateway.sqlite"),
   APP_BACKEND: z.enum(["codex-app-server"]).default("codex-app-server"),
   CODEX_APP_SERVER_COMMAND: z.string().min(1).default("codex"),
+  CODEX_APP_SERVER_MODEL: z.string().min(1).optional(),
   CODEX_APP_SERVER_TURN_TIMEOUT_MS: z.coerce.number().int().positive().default(10 * 60 * 1000),
+  CODEXGW_MAX_PARALLEL_READ_TASKS: z.coerce.number().int().positive().default(4),
   CODEXGW_ALLOWED_REPOS_JSON: z.string().optional(),
   TOKEN_PEPPER: z.string().min(1).default("change-me-to-a-long-random-secret"),
   BOOTSTRAP_ADMIN_TOKEN: z.string().optional()

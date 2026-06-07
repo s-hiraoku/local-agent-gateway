@@ -8,6 +8,7 @@ import { appendTaskEvent } from "./task-events.js";
 import { captureTaskDiffArtifact } from "./diff-artifacts.js";
 import type { LiveTaskEvents } from "./live-events.js";
 import type { InitialTaskStatus, TaskQueue } from "./task-queue.js";
+import type { ActiveTaskSessions } from "./active-sessions.js";
 
 type TaskRow = {
   id: string;
@@ -53,8 +54,10 @@ export function createTask(
     cwd: string;
     prompt: string;
     mode: TaskMode;
+    providerId: string;
     id?: string;
     liveEvents?: LiveTaskEvents;
+    activeSessions?: ActiveTaskSessions;
   }
 ): TaskRecord {
   const initialStatus = queue.initialStatus(params.repoId, params.mode);
@@ -73,6 +76,7 @@ function createTaskRecord(
     tokenId: string;
     repoId: string;
     mode: TaskMode;
+    providerId: string;
     id?: string;
   },
   status: InitialTaskStatus,
@@ -85,18 +89,22 @@ function createTaskRecord(
     `INSERT INTO tasks (
       id, token_id, provider, backend, repo, mode, thread_id, status, summary, changed_files_json, error, created_at, completed_at
     ) VALUES (
-      @id, @tokenId, 'codex', 'app-server', @repo, @mode, NULL, @status, '', '[]', NULL, @createdAt, NULL
+      @id, @tokenId, @provider, 'app-server', @repo, @mode, NULL, @status, '', '[]', NULL, @createdAt, NULL
     )`
   ).run({
     id,
     tokenId: params.tokenId,
+    provider: params.providerId,
     repo: params.repoId,
     mode: params.mode,
     status,
     createdAt
   });
   if (status === "queued") {
-    appendAndPublish(db, liveEvents, id, { type: "task.queued", payload: { repo: params.repoId, mode: params.mode } });
+    appendAndPublish(db, liveEvents, id, {
+      type: "task.queued",
+      payload: { repo: params.repoId, provider: params.providerId, mode: params.mode }
+    });
   }
 
   return getTask(db, id) as TaskRecord;
@@ -107,22 +115,35 @@ async function runTask(
   runner: TaskRunner,
   id: string,
   params: {
+    tokenId: string;
     repoId: string;
     cwd: string;
     prompt: string;
     mode: TaskMode;
+    providerId: string;
     liveEvents?: LiveTaskEvents;
+    activeSessions?: ActiveTaskSessions;
   }
 ): Promise<void> {
   let sawAgentMessage = false;
   let sawDiffUpdate = false;
+  let activeSession: ReturnType<ActiveTaskSessions["register"]> | null = null;
 
   try {
-    markTaskStarted(db, id, params.repoId, params.mode, params.liveEvents);
+    markTaskStarted(db, id, params.repoId, params.providerId, params.mode, params.liveEvents);
+    activeSession = params.activeSessions?.register({
+      taskId: id,
+      tokenId: params.tokenId,
+      repo: params.repoId,
+      provider: params.providerId,
+      mode: params.mode
+    }) ?? null;
     const result = await runner.runTask({
       prompt: params.prompt,
       cwd: params.cwd,
       mode: params.mode,
+      providerId: params.providerId,
+      onControlHandle: (handle) => activeSession?.attachHandle(handle),
       onEvent: (event) => {
         if (event.type === "agent.message.completed") {
           sawAgentMessage = true;
@@ -157,13 +178,16 @@ async function runTask(
     ).run({
       id,
       threadId: result.threadId,
-      provider: result.provider,
+      provider: params.providerId,
       backend: result.backend,
       summary: sanitizePublicText(result.summary),
       changedFilesJson: JSON.stringify(result.changedFiles),
       completedAt
     });
-    appendAndPublish(db, params.liveEvents, id, { type: "task.completed", payload: { summary: result.summary } });
+    appendAndPublish(db, params.liveEvents, id, {
+      type: "task.completed",
+      payload: { provider: params.providerId, summary: result.summary }
+    });
   } catch (error) {
     const completedAt = nowIso();
     const publicError = error instanceof Error ? sanitizePublicText(error.message) : "Task failed";
@@ -180,14 +204,23 @@ async function runTask(
     });
     appendAndPublish(db, params.liveEvents, id, {
       type: "task.failed",
-      payload: { error: publicError }
+      payload: { provider: params.providerId, error: publicError }
     });
+  } finally {
+    activeSession?.complete();
   }
 }
 
-function markTaskStarted(db: Db, id: string, repoId: string, mode: TaskMode, liveEvents?: LiveTaskEvents): void {
+function markTaskStarted(
+  db: Db,
+  id: string,
+  repoId: string,
+  providerId: string,
+  mode: TaskMode,
+  liveEvents?: LiveTaskEvents
+): void {
   db.prepare("UPDATE tasks SET status = 'pending' WHERE id = ? AND status = 'queued'").run(id);
-  appendAndPublish(db, liveEvents, id, { type: "task.started", payload: { repo: repoId, mode } });
+  appendAndPublish(db, liveEvents, id, { type: "task.started", payload: { repo: repoId, provider: providerId, mode } });
 }
 
 function appendAndPublish(
@@ -247,4 +280,36 @@ export function listTasks(
     )
     .all(values) as TaskRow[];
   return rows.map(parseTaskRow);
+}
+
+export function failIncompleteTasksOnStartup(db: Db): number {
+  const tasks = db
+    .prepare("SELECT * FROM tasks WHERE status IN ('queued', 'pending') ORDER BY created_at ASC, id ASC")
+    .all() as TaskRow[];
+  if (tasks.length === 0) {
+    return 0;
+  }
+
+  const completedAt = nowIso();
+  const error = "Task did not complete before Gateway startup";
+  const update = db.prepare(
+    `UPDATE tasks
+     SET status = 'failed',
+         error = @error,
+         completed_at = @completedAt
+     WHERE id = @id AND status IN ('queued', 'pending')`
+  );
+
+  const failTask = db.transaction((rows: TaskRow[]) => {
+    for (const row of rows) {
+      update.run({ id: row.id, error, completedAt });
+      appendTaskEvent(db, row.id, {
+        type: "task.failed",
+        payload: { provider: row.provider, error, recovery: "startup" }
+      });
+    }
+  });
+
+  failTask(tasks);
+  return tasks.length;
 }

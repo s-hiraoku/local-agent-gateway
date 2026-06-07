@@ -24,8 +24,8 @@ describe("providers", () => {
             streamEvents: true,
             diffArtifacts: true,
             accountAuth: true,
-            cancel: false,
-            steer: false,
+            cancel: true,
+            steer: true,
             models: false
           }
         }

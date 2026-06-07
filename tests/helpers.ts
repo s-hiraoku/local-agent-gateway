@@ -4,9 +4,10 @@ import { migrate } from "../src/db/migrate.js";
 import { createApiToken } from "../src/auth/token.js";
 import type { AppConfig } from "../src/config.js";
 import type { CodexAccountClient, CodexAccountState, DeviceCodeLogin } from "../src/codex/client.js";
-import type { NewTaskEvent } from "../src/tasks/task-events.js";
 import type { TaskRunner, TaskRunResult } from "../src/provider/task-runner.js";
 import type { LiveTaskEvents } from "../src/tasks/live-events.js";
+import type { ActiveTaskSessions } from "../src/tasks/active-sessions.js";
+import type { TaskQueue } from "../src/tasks/task-queue.js";
 
 export const TEST_CONFIG: AppConfig = {
   NODE_ENV: "test",
@@ -15,25 +16,21 @@ export const TEST_CONFIG: AppConfig = {
   DATABASE_PATH: ":memory:",
   APP_BACKEND: "codex-app-server",
   CODEX_APP_SERVER_COMMAND: "codex",
+  CODEX_APP_SERVER_MODEL: undefined,
   CODEX_APP_SERVER_TURN_TIMEOUT_MS: 1_000,
+  CODEXGW_MAX_PARALLEL_READ_TASKS: 4,
   CODEXGW_ALLOWED_REPOS_JSON: undefined,
   TOKEN_PEPPER: "test-pepper",
   BOOTSTRAP_ADMIN_TOKEN: "bootstrap-secret"
 };
 
 export class FakeTaskRunner implements TaskRunner {
-  calls: Array<{ prompt: string; cwd: string; mode: string }> = [];
+  calls: Array<Parameters<TaskRunner["runTask"]>[0]> = [];
   summary = "task completed";
   changedFiles: string[] = [];
   error: Error | null = null;
 
-  async runTask(params: {
-    prompt: string;
-    cwd: string;
-    threadId?: string;
-    mode: "read-only" | "workspace-write";
-    onEvent?: (event: NewTaskEvent) => void | Promise<void>;
-  }): Promise<TaskRunResult> {
+  async runTask(params: Parameters<TaskRunner["runTask"]>[0]): Promise<TaskRunResult> {
     this.calls.push(params);
     if (this.error) {
       throw this.error;
@@ -91,9 +88,12 @@ export function makeTestApp(
   options: {
     db?: Db;
     taskRunner?: TaskRunner;
+    taskRunners?: Record<string, TaskRunner>;
     codexRunner?: TaskRunner;
     codexAccountClient?: CodexAccountClient;
     liveTaskEvents?: LiveTaskEvents;
+    taskQueue?: TaskQueue;
+    activeTaskSessions?: ActiveTaskSessions;
   } = {}
 ) {
   const db = options.db ?? makeTestDb();
@@ -103,8 +103,11 @@ export function makeTestApp(
     config: TEST_CONFIG,
     db,
     taskRunner,
+    ...(options.taskRunners ? { taskRunners: options.taskRunners } : {}),
     codexAccountClient,
-    ...(options.liveTaskEvents ? { liveTaskEvents: options.liveTaskEvents } : {})
+    ...(options.liveTaskEvents ? { liveTaskEvents: options.liveTaskEvents } : {}),
+    ...(options.taskQueue ? { taskQueue: options.taskQueue } : {}),
+    ...(options.activeTaskSessions ? { activeTaskSessions: options.activeTaskSessions } : {})
   });
 
   return { app, db, taskRunner, codexRunner: taskRunner, codexAccountClient };

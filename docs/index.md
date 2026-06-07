@@ -57,7 +57,9 @@ cp .env.example .env
 | `DATABASE_PATH` | SQLite データベースの保存先。 |
 | `APP_BACKEND` | 実行バックエンド。既定は `codex-app-server`。 |
 | `CODEX_APP_SERVER_COMMAND` | 起動する Codex CLI コマンド。既定は `codex`。 |
+| `CODEX_APP_SERVER_MODEL` | 任意。`codex app-server -c model=...` に渡す model override。ローカル Codex 設定の既定 model がアカウントや CLI と合わない場合に固定する。 |
 | `CODEX_APP_SERVER_TURN_TIMEOUT_MS` | App Server の turn 完了待ちタイムアウト。 |
+| `CODEXGW_MAX_PARALLEL_READ_TASKS` | 並行実行できる read-only タスク数。既定は `4`。超過分はプロセス内キューで待機する。 |
 | `CODEXGW_ALLOWED_REPOS_JSON` | Gateway が操作できるリポジトリ allowlist。production では必須。 |
 | `TOKEN_PEPPER` | トークンハッシュ用の長いランダム秘密値。production では既定値不可。 |
 | `BOOTSTRAP_ADMIN_TOKEN` | 初回トークン作成用の一時管理トークン。production では設定不可。 |
@@ -108,6 +110,8 @@ curl -X POST http://127.0.0.1:8787/v1/tokens \
     "scopes": [
       "task:create",
       "task:read",
+      "task:control",
+      "audit:read",
       "token:create",
       "token:read",
       "token:revoke",
@@ -116,7 +120,8 @@ curl -X POST http://127.0.0.1:8787/v1/tokens \
       "codex:account:logout",
       "repo:local-agent-gateway",
       "mode:read-only",
-      "mode:workspace-write"
+      "mode:workspace-write",
+      "provider:codex"
     ],
     "expiresInDays": 90
   }'
@@ -132,6 +137,8 @@ curl -X POST http://127.0.0.1:8787/v1/tokens \
 | --- | --- |
 | `task:create` | タスクを作成できる。 |
 | `task:read` | タスクや許可済みリポジトリを読める。 |
+| `task:control` | 別トークンが作成した active task を制御できる。作成者本人の制御には不要。 |
+| `audit:read` | 監査ログ一覧を読める。 |
 | `token:create` | 新しいトークンを作成できる。 |
 | `token:read` | トークン一覧を読める。生トークンは返らない。 |
 | `token:revoke` | トークンを失効できる。 |
@@ -141,6 +148,7 @@ curl -X POST http://127.0.0.1:8787/v1/tokens \
 | `repo:<repoId>` | 指定リポジトリを対象にできる。 |
 | `mode:read-only` | 読み取り専用タスクを作成できる。 |
 | `mode:workspace-write` | workspace-write タスクを作成できる。 |
+| `provider:<providerId>` | 指定 task provider を明示利用できる。現行の既定 provider は `codex`。 |
 
 `thread:create` と `thread:write` は互換性のために有効なスコープとして扱われますが、現行 API の主要操作は `task:*` を使います。
 
@@ -170,7 +178,7 @@ curl http://127.0.0.1:8787/v1/repos \
 
 ## Provider 一覧
 
-利用可能な task provider と公開 capability を確認できます。backend 名、transport、内部 payload は返しません。
+利用可能な task provider と公開 capability を確認できます。backend 名、transport、内部 payload は返しません。`POST /v1/tasks` で `provider` を省略すると既定の `codex` が使われます。将来追加される非既定 provider を明示指定する場合は、呼び出し元トークンに `provider:<providerId>` が必要です。
 
 ```bash
 curl http://127.0.0.1:8787/v1/providers \
@@ -191,8 +199,8 @@ curl http://127.0.0.1:8787/v1/providers \
         "streamEvents": true,
         "diffArtifacts": true,
         "accountAuth": true,
-        "cancel": false,
-        "steer": false,
+        "cancel": true,
+        "steer": true,
         "models": false
       }
     }
@@ -236,11 +244,13 @@ curl -X POST http://127.0.0.1:8787/v1/codex/account/logout \
 
 ## タスク作成
 
-タスク作成には `task:create`、`repo:<repoId>`、`mode:<mode>` が必要です。`mode` を省略すると、サーバー側で定義された対象リポジトリの既定モードが使われます。
+タスク作成には `task:create`、`repo:<repoId>`、`mode:<mode>` が必要です。`mode` を省略すると、サーバー側で定義された対象リポジトリの既定モードが使われます。`provider` を省略すると `codex` が使われます。
 
 `POST /v1/tasks` は Codex の実行完了を待たず、`202 Accepted` と Gateway の `taskId` を返します。外部ツールはこの `taskId` を保存し、`GET /v1/tasks/:id` を polling して `completed` または `failed` を確認します。
 
-`workspace-write` タスクは repo ごとに 1 件ずつ実行されます。同じ repo で write タスクが実行中の場合、後続の write タスクは `queued` 状態で作成され、前の write タスクが完了または失敗した後に `pending` へ進みます。`read-only` タスクは write タスクの待機列に入らず並行実行できます。
+`workspace-write` タスクは repo ごとに 1 件ずつ実行されます。同じ repo で write タスクが実行中の場合、後続の write タスクは `queued` 状態で作成され、前の write タスクが完了または失敗した後に `pending` へ進みます。`read-only` タスクは write タスクの待機列に入らず並行実行できますが、`CODEXGW_MAX_PARALLEL_READ_TASKS` を超える分は `queued` になります。
+
+Gateway はプロンプト本文と Codex runner handle を永続化しません。起動時に前回プロセスから残った `queued` または `pending` タスクがある場合、それらは復旧不能な未完了タスクとして `failed` に整理されます。
 
 ```bash
 curl -X POST http://127.0.0.1:8787/v1/tasks \
@@ -248,6 +258,7 @@ curl -X POST http://127.0.0.1:8787/v1/tasks \
   -H "Content-Type: application/json" \
   -d '{
     "repo": "local-agent-gateway",
+    "provider": "codex",
     "prompt": "READMEを読んで改善案を出してください",
     "mode": "read-only"
   }'
@@ -259,6 +270,7 @@ curl -X POST http://127.0.0.1:8787/v1/tasks \
 {
   "taskId": "task_...",
   "status": "pending",
+  "provider": "codex",
   "repo": "local-agent-gateway",
   "mode": "read-only",
   "summary": "",
@@ -297,6 +309,7 @@ curl 'http://127.0.0.1:8787/v1/tasks?repo=local-agent-gateway&status=completed&l
 {
   "taskId": "task_...",
   "status": "completed",
+  "provider": "codex",
   "repo": "local-agent-gateway",
   "mode": "read-only",
   "summary": "task completed",
@@ -317,9 +330,29 @@ curl http://127.0.0.1:8787/v1/tasks/task_.../events \
   -H "Accept: text/event-stream"
 ```
 
-イベントは正規化済みの `task.queued`、`task.started`、`agent.message.completed`、`file.changed`、`diff.available`、`task.completed`、`task.failed` などです。レスポンスには Gateway `taskId` だけを含め、Codex 内部 thread ID、raw `cwd`、App Server の raw JSON-RPC payload は含めません。再取得時は `Last-Event-ID` header を指定すると、そのIDより後のイベントだけを取得できます。
+イベントは正規化済みの `task.queued`、`task.started`、`task.interrupted`、`task.steered`、`agent.message.completed`、`file.changed`、`diff.available`、`task.completed`、`task.failed` などです。レスポンスには Gateway `taskId` だけを含め、Codex 内部 thread ID、raw `cwd`、App Server の raw JSON-RPC payload は含めません。再取得時は `Last-Event-ID` header を指定すると、そのIDより後のイベントだけを取得できます。
 
-実行中タスクの場合、イベント endpoint は保存済みイベントを replay した後も接続を開いたままにし、新しい Gateway event を terminal event まで配信します。この live fan-out はプロセス内状態なので、Gateway 再起動後のクライアントは `Last-Event-ID` で再接続してください。
+実行中タスクの場合、イベント endpoint は保存済みイベントを replay した後も接続を開いたままにし、新しい Gateway event を terminal event まで配信します。この live fan-out はプロセス内状態なので、Gateway 再起動後のクライアントは `Last-Event-ID` で保存済みイベントを再取得してください。再起動前に未完了だったタスクは `task.failed` として記録されます。
+
+## タスク制御
+
+active task は Gateway の `taskId` で interrupt / steer できます。作成者本人は自分の active task を制御できます。別トークンが制御する場合は `task:read`、`task:control`、対象 repo scope が必要です。`queued`、`completed`、`failed`、または Gateway 再起動後に active session handle が失われた task は `CONFLICT` になります。
+
+```bash
+curl -X POST http://127.0.0.1:8787/v1/tasks/task_.../interrupt \
+  -H "Authorization: Bearer $CODEXGW_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{}'
+```
+
+```bash
+curl -X POST http://127.0.0.1:8787/v1/tasks/task_.../steer \
+  -H "Authorization: Bearer $CODEXGW_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{ "message": "Please focus on tests before editing docs." }'
+```
+
+`steer.message` は 1 文字以上 2,000 文字以下です。監査ログと task event には全文を保存せず、hash と omitted preview だけを残します。公開 API は Codex 内部 thread ID、turn ID、raw App Server payload を受け取りません。
 
 ## Diff Artifact
 
@@ -331,6 +364,15 @@ curl http://127.0.0.1:8787/v1/tasks/task_.../diff \
 ```
 
 レスポンスは Gateway `taskId`、repo ID、status、repo-relative `changedFiles`、scrub済み `patch`、`truncated`、artifact `createdAt` を返します。Codex内部thread IDやraw `cwd`は含めません。`/diff` はrequest時のlive worktreeを読みません。
+
+## 監査ログ
+
+`GET /v1/audit-logs` は `audit:read` が必要です。query は `action`、`repo`、`status` (`success`、`failure`)、`taskId`、`limit` を受け付けます。raw token、token hash、full prompt、full steering text は返しません。
+
+```bash
+curl 'http://127.0.0.1:8787/v1/audit-logs?action=tasks:create&limit=20' \
+  -H "Authorization: Bearer $ADMIN_TOKEN"
+```
 
 外部クライアント統合の設計方針は [`CLIENT_INTEGRATION.md`](CLIENT_INTEGRATION.md)、event stream の詳細は [`EVENT_STREAMING.md`](EVENT_STREAMING.md)、workspace target の将来設計は [`WORKSPACE_TARGETS.md`](WORKSPACE_TARGETS.md)、task control のguardrailは [`TASK_CONTROL.md`](TASK_CONTROL.md) を参照してください。
 
@@ -387,10 +429,12 @@ curl -X DELETE http://127.0.0.1:8787/v1/tokens/tok_... \
 | --- | --- |
 | `UNAUTHORIZED` | Authorization ヘッダーがない、形式が違う、トークンが無効。 |
 | `FORBIDDEN` | 必要なスコープがない。 |
+| `CONFLICT` | task が active ではない、または active session handle が利用できない。 |
 | `VALIDATION_ERROR` | リクエストボディやパラメータが不正。 |
 | `TOKEN_EXPIRED` | トークンの有効期限切れ。 |
 | `TOKEN_REVOKED` | トークンが失効済み。 |
 | `REPO_NOT_ALLOWED` | allowlist にないリポジトリを指定した。 |
+| `PROVIDER_NOT_ALLOWED` | 登録されていない、または runner が接続されていない provider を指定した。 |
 | `MODE_NOT_ALLOWED` | 対象リポジトリで許可されていないモードを指定した。 |
 | `CODEX_NOT_CONFIGURED` | Codex 実行環境が未設定。 |
 | `CODEX_EXECUTION_FAILED` | Codex タスク実行に失敗した。 |
@@ -400,10 +444,12 @@ curl -X DELETE http://127.0.0.1:8787/v1/tokens/tok_... \
 - production では `TOKEN_PEPPER` を長いランダム値に変更する。
 - production では `BOOTSTRAP_ADMIN_TOKEN` を設定しない。
 - production では `CODEXGW_ALLOWED_REPOS_JSON` に公開してよい `repoId` とサーバー内の実パスを明示する。
+- `CODEXGW_MAX_PARALLEL_READ_TASKS` をローカルマシンの CPU、メモリ、Codex 利用量に合わせて調整する。
 - 外部公開時は API の前段に認証・アクセス制御レイヤーを置く。
 - トークンは用途ごとに短い有効期限と最小スコープで発行する。
 - `workspace-write` は必要なクライアントだけに付与する。
 - Codex アカウント操作スコープは管理者用トークンだけに付与する。
+- `audit:read` と `task:control` は管理者または明確に信頼した automation のみに付与する。
 - 監査ログとサーバーログに機密値が出ていないことを定期的に確認する。
 
 ## Codex Harness
@@ -413,7 +459,9 @@ curl -X DELETE http://127.0.0.1:8787/v1/tokens/tok_... \
 | パス | 用途 |
 | --- | --- |
 | `AGENTS.md` | Codex に渡すリポジトリ固有の作業ルール。 |
+| `policy_template.md` | Codex 作業で守る仕様・安全・品質ゲートのテンプレート。 |
 | `policies/*.yaml` | strict/default/experimental の安全・検証ポリシー例。 |
+| `docs/QUALITY.md` | 実用運用に向けた品質ゲート、確認観点、既知制限。 |
 | `scripts/verify.sh` | lint/typecheck/test/build をまとめて実行する検証入口。 |
 | `scripts/checkpoint.sh` | `codex/ledger/current.md` へ作業チェックポイントを追記する補助スクリプト。 |
 | `codex/skills/` | bug fix、feature、review、release check などの再利用ワークフロー。 |
