@@ -10,6 +10,7 @@ export const ERROR_CODES = [
   "TOKEN_EXPIRED",
   "TOKEN_REVOKED",
   "REPO_NOT_ALLOWED",
+  "PROVIDER_NOT_ALLOWED",
   "MODE_NOT_ALLOWED",
   "CODEX_NOT_CONFIGURED",
   "CODEX_EXECUTION_FAILED",
@@ -27,6 +28,7 @@ const STATUS_BY_CODE: Record<ErrorCode, number> = {
   TOKEN_EXPIRED: 401,
   TOKEN_REVOKED: 401,
   REPO_NOT_ALLOWED: 403,
+  PROVIDER_NOT_ALLOWED: 403,
   MODE_NOT_ALLOWED: 403,
   CODEX_NOT_CONFIGURED: 501,
   CODEX_EXECUTION_FAILED: 500,
@@ -63,6 +65,8 @@ export function defaultMessage(code: ErrorCode): string {
       return "Token revoked";
     case "REPO_NOT_ALLOWED":
       return "Repository is not allowed";
+    case "PROVIDER_NOT_ALLOWED":
+      return "Provider is not allowed";
     case "MODE_NOT_ALLOWED":
       return "Mode is not allowed";
     case "CODEX_NOT_CONFIGURED":

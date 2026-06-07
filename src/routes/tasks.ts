@@ -20,6 +20,7 @@ import type { ActiveTaskSessions } from "../tasks/active-sessions.js";
 
 const createTaskSchema = z.object({
   repo: z.string().min(1).max(100),
+  provider: z.string().min(1).max(100).regex(/^[A-Za-z0-9._-]+$/).optional(),
   prompt: z.string().min(1).max(20_000),
   mode: z.enum(["read-only", "workspace-write"]).optional()
 }).strict();
@@ -42,6 +43,7 @@ function taskResponse(task: TaskRecord) {
   return {
     taskId: task.id,
     status: task.status,
+    provider: task.provider,
     repo: task.repo,
     mode: task.mode,
     summary: sanitizePublicText(task.summary),
@@ -56,7 +58,7 @@ export async function taskRoutes(
   app: FastifyInstance,
   deps: {
     db: Db;
-    taskRunner: TaskRunner;
+    taskRunners: Record<string, TaskRunner>;
     taskQueue: TaskQueue;
     liveTaskEvents: LiveTaskEvents;
     activeTaskSessions: ActiveTaskSessions;
@@ -66,7 +68,11 @@ export async function taskRoutes(
     request.audit = { ...request.audit, action: "tasks:create" };
 
     const body = createTaskSchema.parse(request.body);
-    const { repo, mode } = authorizeTaskCreate(request, body.repo, body.mode);
+    const { repo, mode, provider } = authorizeTaskCreate(request, body.repo, body.mode, body.provider);
+    const taskRunner = deps.taskRunners[provider.id];
+    if (!taskRunner) {
+      throw new ApiError("PROVIDER_NOT_ALLOWED");
+    }
     request.audit = {
       ...request.audit,
       repo: repo.id,
@@ -82,13 +88,14 @@ export async function taskRoutes(
     const taskId = makeId("task");
     request.audit = { ...request.audit, taskId };
 
-    const task = createTask(deps.db, deps.taskRunner, deps.taskQueue, {
+    const task = createTask(deps.db, taskRunner, deps.taskQueue, {
       id: taskId,
       tokenId: request.auth.id,
       repoId: repo.id,
       cwd: repo.path,
       prompt: body.prompt,
       mode,
+      providerId: provider.id,
       liveEvents: deps.liveTaskEvents,
       activeSessions: deps.activeTaskSessions
     });

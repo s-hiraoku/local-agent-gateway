@@ -115,18 +115,48 @@ describe("tasks", () => {
     expect(response.statusCode).toBe(202);
     expect(response.json()).toMatchObject({
       status: "pending",
+      provider: "codex",
       repo: "local-agent-gateway",
       mode: "read-only"
     });
     expect(response.json().threadId).toBeUndefined();
     expect(runner.calls[0]?.mode).toBe("read-only");
+    expect(runner.calls[0]?.providerId).toBe("codex");
 
     const task = await waitForTask(app, token.token, response.json().taskId as string);
     expect(task).toMatchObject({
       status: "completed",
+      provider: "codex",
       summary: "task completed",
       changedFiles: []
     });
+  });
+
+  it("accepts an explicit registered provider without exposing backend internals", async () => {
+    const runner = new FakeTaskRunner();
+    const { app, db } = makeTestApp({ taskRunner: runner });
+    const token = issueToken(db, ["task:create", "task:read", "repo:local-agent-gateway", "mode:read-only"]);
+
+    const response = await app.inject({
+      method: "POST",
+      url: "/v1/tasks",
+      headers: authHeader(token.token),
+      payload: {
+        repo: "local-agent-gateway",
+        provider: "codex",
+        prompt: "Read README",
+        mode: "read-only"
+      }
+    });
+
+    expect(response.statusCode).toBe(202);
+    expect(response.json()).toMatchObject({
+      provider: "codex",
+      repo: "local-agent-gateway",
+      mode: "read-only"
+    });
+    expect(JSON.stringify(response.json())).not.toContain("app-server");
+    expect(runner.calls[0]?.providerId).toBe("codex");
   });
 
   it("rejects workspace-write when token lacks workspace-write scope", async () => {
@@ -517,6 +547,7 @@ describe("tasks", () => {
       .all(created.json().taskId) as Array<{ type: string; payload_json: string }>;
     expect(events.at(-1)?.type).toBe("task.failed");
     expect(JSON.parse(events.at(-1)?.payload_json ?? "{}")).toEqual({
+      provider: "codex",
       error: "Task did not complete before Gateway startup",
       recovery: "startup"
     });

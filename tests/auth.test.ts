@@ -105,7 +105,7 @@ describe("auth", () => {
       headers: authHeader(TEST_CONFIG.BOOTSTRAP_ADMIN_TOKEN ?? ""),
       payload: {
         name: "raycast",
-        scopes: ["task:read", "repo:local-agent-gateway", "mode:read-only"],
+        scopes: ["task:read", "repo:local-agent-gateway", "mode:read-only", "provider:codex"],
         expiresInDays: 30
       }
     });

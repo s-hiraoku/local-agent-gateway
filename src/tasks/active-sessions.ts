@@ -4,6 +4,7 @@ type ActiveTaskSession = {
   taskId: string;
   tokenId: string;
   repo: string;
+  provider: string;
   mode: string;
   handle: TaskControlHandle | null;
 };
@@ -16,7 +17,7 @@ export type ActiveTaskRegistration = {
 export class ActiveTaskSessions {
   private readonly sessions = new Map<string, ActiveTaskSession>();
 
-  register(params: { taskId: string; tokenId: string; repo: string; mode: string }): ActiveTaskRegistration {
+  register(params: { taskId: string; tokenId: string; repo: string; provider: string; mode: string }): ActiveTaskRegistration {
     const session: ActiveTaskSession = {
       ...params,
       handle: null

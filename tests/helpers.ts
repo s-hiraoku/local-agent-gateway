@@ -88,6 +88,7 @@ export function makeTestApp(
   options: {
     db?: Db;
     taskRunner?: TaskRunner;
+    taskRunners?: Record<string, TaskRunner>;
     codexRunner?: TaskRunner;
     codexAccountClient?: CodexAccountClient;
     liveTaskEvents?: LiveTaskEvents;
@@ -102,6 +103,7 @@ export function makeTestApp(
     config: TEST_CONFIG,
     db,
     taskRunner,
+    ...(options.taskRunners ? { taskRunners: options.taskRunners } : {}),
     codexAccountClient,
     ...(options.liveTaskEvents ? { liveTaskEvents: options.liveTaskEvents } : {}),
     ...(options.taskQueue ? { taskQueue: options.taskQueue } : {}),

@@ -20,11 +20,13 @@ import { TaskQueue } from "./tasks/task-queue.js";
 import { ActiveTaskSessions } from "./tasks/active-sessions.js";
 import { auditLogRoutes } from "./routes/audit-logs.js";
 import { failIncompleteTasksOnStartup } from "./tasks/tasks.js";
+import { DEFAULT_TASK_PROVIDER_ID } from "./provider/registry.js";
 
 export type AppDeps = {
   config: AppConfig;
   db?: Db;
   taskRunner?: TaskRunner;
+  taskRunners?: Record<string, TaskRunner>;
   codexRunner?: TaskRunner;
   codexAccountClient?: CodexAccountClient;
   liveTaskEvents?: LiveTaskEvents;
@@ -48,6 +50,7 @@ export function buildApp(deps: AppDeps) {
   const providedTaskRunner = deps.taskRunner ?? deps.codexRunner;
   const defaultCodex = providedTaskRunner && deps.codexAccountClient ? null : new CodexClient(deps.config);
   const taskRunner = providedTaskRunner ?? (defaultCodex as CodexClient);
+  const taskRunners = deps.taskRunners ?? { [DEFAULT_TASK_PROVIDER_ID]: taskRunner };
   const codexAccountClient = deps.codexAccountClient ?? (defaultCodex as CodexClient);
   const liveTaskEvents = deps.liveTaskEvents ?? new LiveTaskEvents();
   const taskQueue = deps.taskQueue ?? new TaskQueue(deps.config.CODEXGW_MAX_PARALLEL_READ_TASKS);
@@ -89,7 +92,7 @@ export function buildApp(deps: AppDeps) {
     await protectedApp.register(tokenRoutes, { db, config: deps.config });
     await protectedApp.register(auditLogRoutes, { db });
     await protectedApp.register(codexAccountRoutes, { codex: codexAccountClient });
-    await protectedApp.register(taskRoutes, { db, taskRunner, taskQueue, liveTaskEvents, activeTaskSessions });
+    await protectedApp.register(taskRoutes, { db, taskRunners, taskQueue, liveTaskEvents, activeTaskSessions });
   });
 
   return app;

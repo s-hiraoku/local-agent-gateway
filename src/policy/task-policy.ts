@@ -4,13 +4,23 @@ import { hasScope } from "../auth/scopes.js";
 import { getAllowedRepo } from "./repos.js";
 import { assertTaskMode, type TaskMode } from "./modes.js";
 import { ApiError } from "../utils/errors.js";
+import {
+  DEFAULT_TASK_PROVIDER_ID,
+  getTaskProviderDescriptor
+} from "../provider/registry.js";
 
 export type TaskPolicyResult = {
   repo: ReturnType<typeof getAllowedRepo>;
   mode: TaskMode;
+  provider: ReturnType<typeof getTaskProviderDescriptor>;
 };
 
-export function authorizeTaskCreate(request: FastifyRequest, repoId: string, requestedMode?: string): TaskPolicyResult {
+export function authorizeTaskCreate(
+  request: FastifyRequest,
+  repoId: string,
+  requestedMode?: string,
+  requestedProvider?: string
+): TaskPolicyResult {
   requireScopes(request, ["task:create"]);
   if (!request.auth || !hasScope(request.auth.scopes, `repo:${repoId}`)) {
     throw new ApiError("FORBIDDEN");
@@ -18,14 +28,24 @@ export function authorizeTaskCreate(request: FastifyRequest, repoId: string, req
 
   const repo = getAllowedRepo(repoId);
   const mode = requestedMode ? assertTaskMode(requestedMode) : repo.defaultMode;
+  const provider = getTaskProviderDescriptor(requestedProvider ?? DEFAULT_TASK_PROVIDER_ID);
 
   if (!repo.allowedModes.includes(mode)) {
     throw new ApiError("MODE_NOT_ALLOWED");
   }
+  if (mode === "read-only" && !provider.capabilities.readOnly) {
+    throw new ApiError("MODE_NOT_ALLOWED");
+  }
+  if (mode === "workspace-write" && !provider.capabilities.workspaceWrite) {
+    throw new ApiError("MODE_NOT_ALLOWED");
+  }
 
   requireScopes(request, [`mode:${mode}`]);
+  if (requestedProvider && requestedProvider !== DEFAULT_TASK_PROVIDER_ID) {
+    requireScopes(request, [`provider:${provider.id}`]);
+  }
 
-  return { repo, mode };
+  return { repo, mode, provider };
 }
 
 export function authorizeTaskRead(request: FastifyRequest, task: { tokenId: string; repo: string }): void {

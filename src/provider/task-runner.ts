@@ -20,6 +20,7 @@ export interface TaskRunner {
     cwd: string;
     threadId?: string;
     mode: TaskMode;
+    providerId?: string;
     onEvent?: (event: NewTaskEvent) => void | Promise<void>;
     onControlHandle?: (handle: TaskControlHandle) => void;
   }): Promise<TaskRunResult>;
