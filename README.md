@@ -102,7 +102,8 @@ curl -X POST http://127.0.0.1:8787/v1/tokens \
       "codex:account:logout",
       "repo:local-agent-gateway",
       "mode:read-only",
-      "mode:workspace-write"
+      "mode:workspace-write",
+      "provider:codex"
     ],
     "expiresInDays": 90
   }'
@@ -127,7 +128,7 @@ Authenticated:
 - `POST /v1/codex/account/login/device-code` requires `codex:account:login`; starts ChatGPT device-code login and returns only `loginId`, `verificationUrl`, and `userCode`.
 - `POST /v1/codex/account/login/cancel` requires `codex:account:login`; cancels a pending device-code login by `loginId`.
 - `POST /v1/codex/account/logout` requires `codex:account:logout`; signs Codex out through App Server.
-- `POST /v1/tasks` requires `task:create`, `repo:<repoId>`, and `mode:<mode>`; returns `202 Accepted` with a Gateway `taskId`.
+- `POST /v1/tasks` requires `task:create`, `repo:<repoId>`, and `mode:<mode>`; optional `provider` defaults to `codex`. Non-default providers require `provider:<providerId>`. Returns `202 Accepted` with a Gateway `taskId`.
 - `GET /v1/tasks` requires `task:read`; lists sanitized tasks for repos covered by the caller's `repo:<repoId>` scopes, with optional `repo`, `status`, and `limit` filters.
 - `GET /v1/tasks/:id` allows the creating token to read its own task; other tokens require `task:read` and matching repo scope.
 - `GET /v1/tasks/:id/events` requires the same authorization as `GET /v1/tasks/:id`; replays sanitized task events as Server-Sent Events.
@@ -144,6 +145,7 @@ curl -X POST http://127.0.0.1:8787/v1/tasks \
   -H "Content-Type: application/json" \
   -d '{
     "repo": "local-agent-gateway",
+    "provider": "codex",
     "prompt": "READMEを読んで改善案を出してください",
     "mode": "read-only"
   }'
@@ -169,6 +171,7 @@ curl 'http://127.0.0.1:8787/v1/tasks?repo=local-agent-gateway&status=completed&l
 - Repositories resolve only through the server-side allowlist in `CODEXGW_ALLOWED_REPOS_JSON`; production startup refuses a missing allowlist.
 - Default task mode is `read-only`.
 - Public task modes are only `read-only` and `workspace-write`.
+- Public task providers are selected by registered provider IDs. The default provider is `codex`; future non-default providers require explicit `provider:<providerId>` scopes.
 - Per-repo mode ceilings prevent sensitive repos from being made writeable by scope composition alone.
 - `danger-full-access` is not accepted.
 - No arbitrary shell execution endpoint exists.

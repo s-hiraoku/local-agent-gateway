@@ -22,7 +22,7 @@ Each event uses the Gateway event ID and normalized event type:
 ```text
 id: 12
 event: task.completed
-data: {"id":"12","taskId":"task_...","type":"task.completed","payload":{"summary":"Task completed"},"createdAt":"..."}
+data: {"id":"12","taskId":"task_...","type":"task.completed","payload":{"provider":"codex","summary":"Task completed"},"createdAt":"..."}
 ```
 
 Public event data contains:
@@ -32,6 +32,8 @@ Public event data contains:
 - `type`: normalized event type.
 - `payload`: sanitized event payload.
 - `createdAt`: event timestamp.
+
+Payloads may contain public provider IDs such as `codex`. They must not contain backend names, raw transports, or provider-native session IDs.
 
 Public event data must not contain:
 

@@ -9,8 +9,9 @@ External clients can include CLI tools, web dashboards, desktop apps, mobile app
 - Fastify exposes the authenticated Gateway API.
 - Codex App Server runs only as an internal stdio JSON-RPC process.
 - Repositories are selected by public repo IDs and resolved through the server-side allowlist.
+- Task providers are selected by registered public provider IDs. The default is `codex`; non-default providers require explicit `provider:<providerId>` scopes.
 - Public task APIs expose Gateway `taskId`; Codex internal thread IDs and raw `cwd` values stay server-side.
-- Tokens are scoped by operation, repo, and task mode.
+- Tokens are scoped by operation, repo, task mode, and non-default provider use.
 - Audit logs store prompt hashes and omitted prompt previews, not full prompts.
 - Public text fields are scrubbed for common absolute local path patterns.
 - Startup marks stale `queued` or `pending` tasks as failed because prompts and active runner handles are not durable.
@@ -55,6 +56,16 @@ Implemented in G1:
 - A minimal `npm run smoke` check that loads the built app and verifies `GET /healthz`.
 
 Existing task polling responses do not expose Codex internal IDs or raw paths. Task status can now be `queued`, `pending`, `completed`, or `failed`.
+
+## Provider Selection
+
+Implemented provider contract:
+
+- `GET /v1/providers` returns public provider IDs and capabilities only.
+- `POST /v1/tasks` accepts optional `provider`; omitted means `codex`.
+- Unknown providers, registered providers without a connected runner, or provider/mode capability mismatches fail closed.
+- Non-default providers require `provider:<providerId>` in addition to `task:create`, `repo:<repoId>`, and `mode:<mode>`.
+- Gateway events and task responses may include public provider IDs, but never backend names, raw transports, or provider-native session IDs.
 
 ## Diff Artifacts
 

@@ -11,6 +11,7 @@ This project is security-sensitive local infrastructure. Quality is defined by p
 - Gateway startup fails any stale `queued` or `pending` tasks because prompts and active runner handles are not persisted.
 - `workspace-write` tasks are serialized per repo.
 - `read-only` tasks are limited by `CODEXGW_MAX_PARALLEL_READ_TASKS`.
+- Task provider selection uses registered public IDs. Non-default providers require explicit provider scopes.
 - Active task control is process-local; after restart, interrupt and steer fail closed.
 - Task events and diff artifacts are stored as Gateway artifacts, not Codex internal payloads.
 
@@ -28,6 +29,7 @@ This project is security-sensitive local infrastructure. Quality is defined by p
 
 - Public responses do not expose raw paths, Codex IDs, tokens, full prompts, or raw App Server payloads.
 - New request fields are scoped, validated, documented, and reject unknown unsafe alternatives.
+- New task providers declare capabilities before they can run tasks, and unsupported modes fail closed.
 - Any new execution capability has an explicit deny case.
 - Startup and restart behavior is documented.
 - Tests include both allowed and denied paths for security-sensitive behavior.

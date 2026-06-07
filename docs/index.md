@@ -120,7 +120,8 @@ curl -X POST http://127.0.0.1:8787/v1/tokens \
       "codex:account:logout",
       "repo:local-agent-gateway",
       "mode:read-only",
-      "mode:workspace-write"
+      "mode:workspace-write",
+      "provider:codex"
     ],
     "expiresInDays": 90
   }'
@@ -147,6 +148,7 @@ curl -X POST http://127.0.0.1:8787/v1/tokens \
 | `repo:<repoId>` | 指定リポジトリを対象にできる。 |
 | `mode:read-only` | 読み取り専用タスクを作成できる。 |
 | `mode:workspace-write` | workspace-write タスクを作成できる。 |
+| `provider:<providerId>` | 指定 task provider を明示利用できる。現行の既定 provider は `codex`。 |
 
 `thread:create` と `thread:write` は互換性のために有効なスコープとして扱われますが、現行 API の主要操作は `task:*` を使います。
 
@@ -176,7 +178,7 @@ curl http://127.0.0.1:8787/v1/repos \
 
 ## Provider 一覧
 
-利用可能な task provider と公開 capability を確認できます。backend 名、transport、内部 payload は返しません。
+利用可能な task provider と公開 capability を確認できます。backend 名、transport、内部 payload は返しません。`POST /v1/tasks` で `provider` を省略すると既定の `codex` が使われます。将来追加される非既定 provider を明示指定する場合は、呼び出し元トークンに `provider:<providerId>` が必要です。
 
 ```bash
 curl http://127.0.0.1:8787/v1/providers \
@@ -242,7 +244,7 @@ curl -X POST http://127.0.0.1:8787/v1/codex/account/logout \
 
 ## タスク作成
 
-タスク作成には `task:create`、`repo:<repoId>`、`mode:<mode>` が必要です。`mode` を省略すると、サーバー側で定義された対象リポジトリの既定モードが使われます。
+タスク作成には `task:create`、`repo:<repoId>`、`mode:<mode>` が必要です。`mode` を省略すると、サーバー側で定義された対象リポジトリの既定モードが使われます。`provider` を省略すると `codex` が使われます。
 
 `POST /v1/tasks` は Codex の実行完了を待たず、`202 Accepted` と Gateway の `taskId` を返します。外部ツールはこの `taskId` を保存し、`GET /v1/tasks/:id` を polling して `completed` または `failed` を確認します。
 
@@ -256,6 +258,7 @@ curl -X POST http://127.0.0.1:8787/v1/tasks \
   -H "Content-Type: application/json" \
   -d '{
     "repo": "local-agent-gateway",
+    "provider": "codex",
     "prompt": "READMEを読んで改善案を出してください",
     "mode": "read-only"
   }'
@@ -267,6 +270,7 @@ curl -X POST http://127.0.0.1:8787/v1/tasks \
 {
   "taskId": "task_...",
   "status": "pending",
+  "provider": "codex",
   "repo": "local-agent-gateway",
   "mode": "read-only",
   "summary": "",
@@ -305,6 +309,7 @@ curl 'http://127.0.0.1:8787/v1/tasks?repo=local-agent-gateway&status=completed&l
 {
   "taskId": "task_...",
   "status": "completed",
+  "provider": "codex",
   "repo": "local-agent-gateway",
   "mode": "read-only",
   "summary": "task completed",
@@ -429,6 +434,7 @@ curl -X DELETE http://127.0.0.1:8787/v1/tokens/tok_... \
 | `TOKEN_EXPIRED` | トークンの有効期限切れ。 |
 | `TOKEN_REVOKED` | トークンが失効済み。 |
 | `REPO_NOT_ALLOWED` | allowlist にないリポジトリを指定した。 |
+| `PROVIDER_NOT_ALLOWED` | 登録されていない、または runner が接続されていない provider を指定した。 |
 | `MODE_NOT_ALLOWED` | 対象リポジトリで許可されていないモードを指定した。 |
 | `CODEX_NOT_CONFIGURED` | Codex 実行環境が未設定。 |
 | `CODEX_EXECUTION_FAILED` | Codex タスク実行に失敗した。 |

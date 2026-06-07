@@ -229,3 +229,10 @@ Use this file to record meaningful verification runs.
 - Scope: Practical local operation and quality policy documentation
 - Result: Passed
 - Notes: Full suite reports 69 Vitest tests. `scripts/verify.sh` now also checks that `policy_template.md` and `docs/QUALITY.md` are present.
+
+### 2026-06-08 00:13
+
+- Command: `npm rebuild better-sqlite3`, `npx vitest run tests/authorize.test.ts tests/auth.test.ts tests/tasks.test.ts tests/providers.test.ts`, `npm run typecheck`, `npm run lint`, `npm run build`, `npm test`, `npm run smoke`, `scripts/verify.sh`
+- Scope: Task provider selection groundwork for future non-Codex agent integrations
+- Result: Passed
+- Notes: Rebuilt the local native sqlite dependency after a Node ABI mismatch. Targeted provider/auth/task coverage passed, full suite reports 71 Vitest tests, smoke passed with the existing Node `module.register()` deprecation warning, and repository verification completed.
