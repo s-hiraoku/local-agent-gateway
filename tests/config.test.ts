@@ -51,4 +51,12 @@ describe("config", () => {
       })
     ).toThrow();
   });
+
+  it("loads optional workspace registry JSON", () => {
+    expect(
+      loadConfig({
+        CODEXGW_WORKSPACES_JSON: '[{"id":"main","repo":"local-agent-gateway"}]'
+      }).CODEXGW_WORKSPACES_JSON
+    ).toBe('[{"id":"main","repo":"local-agent-gateway"}]');
+  });
 });

@@ -19,11 +19,20 @@ import type { TaskQueue } from "../tasks/task-queue.js";
 import type { ActiveTaskSessions } from "../tasks/active-sessions.js";
 
 const createTaskSchema = z.object({
-  repo: z.string().min(1).max(100),
+  repo: z.string().min(1).max(100).optional(),
+  workspaceId: z.string().min(1).max(100).regex(/^[A-Za-z0-9._-]+$/).optional(),
   provider: z.string().min(1).max(100).regex(/^[A-Za-z0-9._-]+$/).optional(),
   prompt: z.string().min(1).max(20_000),
   mode: z.enum(["read-only", "workspace-write"]).optional()
-}).strict();
+}).strict().superRefine((body, ctx) => {
+  if (Boolean(body.repo) === Boolean(body.workspaceId)) {
+    ctx.addIssue({
+      code: "custom",
+      path: ["repo"],
+      message: "Specify exactly one of repo or workspaceId"
+    });
+  }
+});
 
 const listTasksQuerySchema = z.object({
   repo: z.string().min(1).max(100).optional(),
@@ -68,7 +77,12 @@ export async function taskRoutes(
     request.audit = { ...request.audit, action: "tasks:create" };
 
     const body = createTaskSchema.parse(request.body);
-    const { repo, mode, provider } = authorizeTaskCreate(request, body.repo, body.mode, body.provider);
+    const { repo, mode, provider } = authorizeTaskCreate(
+      request,
+      { ...(body.repo ? { repoId: body.repo } : {}), ...(body.workspaceId ? { workspaceId: body.workspaceId } : {}) },
+      body.mode,
+      body.provider
+    );
     const taskRunner = deps.taskRunners[provider.id];
     if (!taskRunner) {
       throw new ApiError("PROVIDER_NOT_ALLOWED");
