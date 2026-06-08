@@ -11,7 +11,7 @@ Build a personal Gateway API that lets external clients delegate work to local C
 - Do not expose Codex thread IDs, turn IDs, App Server JSON-RPC payloads, raw `cwd`, absolute local paths, token hashes, raw tokens, full prompts, or full steering text through public APIs, events, logs, or artifacts.
 - Do not add arbitrary shell execution, raw filesystem APIs, public App Server proxying, public `thread/shellCommand`, or `danger-full-access`.
 - Do not accept OpenAI API keys, ChatGPT access tokens, refresh tokens, or session secrets in Gateway request bodies.
-- Resolve repos and future workspaces only through server-side allowlists and opaque public IDs.
+- Resolve repos and workspaces only through server-side registries and opaque public IDs.
 - Select task providers only through registered public provider IDs; never expose provider-native session IDs, transports, or raw payloads.
 - Prefer denial when auth, scope, repo, workspace target, sandbox, token lifetime, or audit behavior is ambiguous.
 
@@ -19,6 +19,7 @@ Build a personal Gateway API that lets external clients delegate work to local C
 
 - Public task modes are only `read-only` and `workspace-write`.
 - Public task providers must declare capabilities before use. Non-default providers require explicit `provider:<providerId>` scopes.
+- Workspace targets must require `workspace:<workspaceId>` and matching `repo:<repoId>` scopes.
 - Codex execution must use `approvalPolicy: "never"`.
 - Codex execution must disable network access unless a future policy explicitly proves a narrower safe alternative.
 - `workspace-write` access must be limited to the allowlisted repo or workspace root.

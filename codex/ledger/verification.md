@@ -236,3 +236,10 @@ Use this file to record meaningful verification runs.
 - Scope: Task provider selection groundwork for future non-Codex agent integrations
 - Result: Passed
 - Notes: Rebuilt the local native sqlite dependency after a Node ABI mismatch. Targeted provider/auth/task coverage passed, full suite reports 71 Vitest tests, smoke passed with the existing Node `module.register()` deprecation warning, and repository verification completed.
+
+### 2026-06-09 00:24
+
+- Command: `npx vitest run tests/policy.test.ts tests/auth.test.ts tests/authorize.test.ts tests/config.test.ts tests/providers.test.ts`, `npm run typecheck`, `npm run lint`, `npm test`, `npm run build`, `npm run smoke`, `scripts/verify.sh`
+- Scope: Workspace target registry and provider adapter contract
+- Result: Passed
+- Notes: Added server-side workspace target selection, workspace scopes, workspace listing, task creation by `workspaceId`, provider adapter typing, docs, and regression coverage. Full suite reports 75 Vitest tests. Smoke passed with the existing Node `module.register()` deprecation warning.

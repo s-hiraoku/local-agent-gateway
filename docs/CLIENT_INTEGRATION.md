@@ -9,9 +9,10 @@ External clients can include CLI tools, web dashboards, desktop apps, mobile app
 - Fastify exposes the authenticated Gateway API.
 - Codex App Server runs only as an internal stdio JSON-RPC process.
 - Repositories are selected by public repo IDs and resolved through the server-side allowlist.
+- Workspaces are selected by public workspace IDs and resolved through the server-side workspace registry.
 - Task providers are selected by registered public provider IDs. The default is `codex`; non-default providers require explicit `provider:<providerId>` scopes.
 - Public task APIs expose Gateway `taskId`; Codex internal thread IDs and raw `cwd` values stay server-side.
-- Tokens are scoped by operation, repo, task mode, and non-default provider use.
+- Tokens are scoped by operation, repo, workspace, task mode, and non-default provider use.
 - Audit logs store prompt hashes and omitted prompt previews, not full prompts.
 - Public text fields are scrubbed for common absolute local path patterns.
 - Startup marks stale `queued` or `pending` tasks as failed because prompts and active runner handles are not durable.
@@ -22,6 +23,7 @@ The following API shapes remain stable unless a breaking change is explicitly re
 
 - `GET /healthz`
 - `GET /v1/repos`
+- `GET /v1/workspaces`
 - `POST /v1/tasks`
 - `GET /v1/tasks`
 - `GET /v1/tasks/:id`
@@ -67,6 +69,16 @@ Implemented provider contract:
 - Non-default providers require `provider:<providerId>` in addition to `task:create`, `repo:<repoId>`, and `mode:<mode>`.
 - Gateway events and task responses may include public provider IDs, but never backend names, raw transports, or provider-native session IDs.
 
+## Workspace Targets
+
+Implemented workspace contract:
+
+- `GET /v1/workspaces` returns public workspace IDs and policy ceilings only.
+- `POST /v1/tasks` accepts exactly one target field: `repo` or `workspaceId`.
+- Workspace tasks require both `workspace:<workspaceId>` and matching `repo:<repoId>` scopes.
+- Unknown workspaces, mode ceilings, provider ceilings, raw `cwd`, and `workspacePath` fail closed.
+- Public responses do not expose internal workspace paths or symlink-resolved paths.
+
 ## Diff Artifacts
 
 Implemented after G1:
@@ -91,10 +103,6 @@ Implemented after diff artifacts:
 - `GET /v1/audit-logs` requires `audit:read` and returns sanitized records with optional filters.
 
 These APIs still do not expose Codex internal thread IDs, turn IDs, raw `cwd`, or raw App Server payloads. Steering text is not stored in full.
-
-## Workspace Targets
-
-Workspace targets remain design-only. `POST /v1/tasks` accepts the current `repo` field only; `workspaceId`, `workspacePath`, raw `cwd`, and other target shortcuts are rejected by strict validation. `/v1/workspaces` endpoints are absent until a server-side registry can resolve opaque IDs to allowlisted internal paths without exposing raw filesystem locations.
 
 See [`TASK_CONTROL.md`](TASK_CONTROL.md) for the control API guardrails and session model. See [`QUALITY.md`](QUALITY.md) for operational quality gates and known limits.
 
