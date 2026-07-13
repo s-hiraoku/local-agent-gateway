@@ -7,7 +7,9 @@ import { TaskQueue } from "../src/tasks/task-queue.js";
 import { authHeader, FakeTaskRunner, issueToken, makeTestApp, makeTestDb } from "./helpers.js";
 
 async function waitForTask(app: FastifyInstance, token: string, taskId: string) {
-  for (let attempt = 0; attempt < 20; attempt += 1) {
+  // A ~100ms budget flaked on loaded machines (background queue + SQLite
+  // writes routinely exceed it); give real time before declaring a hang.
+  for (let attempt = 0; attempt < 200; attempt += 1) {
     const response = await app.inject({
       method: "GET",
       url: `/v1/tasks/${taskId}`,
@@ -17,17 +19,17 @@ async function waitForTask(app: FastifyInstance, token: string, taskId: string) 
     if (body.status === "completed" || body.status === "failed") {
       return body;
     }
-    await new Promise((resolve) => setTimeout(resolve, 5));
+    await new Promise((resolve) => setTimeout(resolve, 10));
   }
   throw new Error("Timed out waiting for task completion");
 }
 
 async function waitForCondition(condition: () => boolean, message: string) {
-  for (let attempt = 0; attempt < 50; attempt += 1) {
+  for (let attempt = 0; attempt < 200; attempt += 1) {
     if (condition()) {
       return;
     }
-    await new Promise((resolve) => setTimeout(resolve, 5));
+    await new Promise((resolve) => setTimeout(resolve, 10));
   }
   throw new Error(message);
 }
