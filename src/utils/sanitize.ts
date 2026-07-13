@@ -11,3 +11,25 @@ export function sanitizePublicText(text: string): string {
   }
   return sanitized;
 }
+
+/**
+ * Structure-preserving sanitization for JSON values. Only string leaf values
+ * are scrubbed; keys, numbers, booleans, nulls, and the object/array shape
+ * are left intact. Running sanitizePublicText over a serialized JSON blob
+ * instead would corrupt it (the path patterns match across quotes), so
+ * structured task output must always go through this function on egress.
+ */
+export function sanitizePublicJson(value: unknown): unknown {
+  if (typeof value === "string") {
+    return sanitizePublicText(value);
+  }
+  if (Array.isArray(value)) {
+    return value.map((item) => sanitizePublicJson(item));
+  }
+  if (value !== null && typeof value === "object") {
+    return Object.fromEntries(
+      Object.entries(value as Record<string, unknown>).map(([key, item]) => [key, sanitizePublicJson(item)])
+    );
+  }
+  return value;
+}

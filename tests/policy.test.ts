@@ -1,7 +1,31 @@
 import { describe, expect, it } from "vitest";
+import { assertStructuredOutputSupported } from "../src/policy/task-policy.js";
 import { authHeader, issueToken, makeTestApp } from "./helpers.js";
 
 describe("policy", () => {
+  it("fails closed when a provider does not declare structured output support", () => {
+    // No registered provider lacks the capability yet, so the deny path is
+    // exercised directly until a second provider exists.
+    const provider = {
+      capabilities: {
+        readOnly: true,
+        workspaceWrite: false,
+        streamEvents: false,
+        diffArtifacts: false,
+        accountAuth: false,
+        cancel: false,
+        steer: false,
+        models: false,
+        structuredOutput: false
+      }
+    };
+
+    expect(() => assertStructuredOutputSupported(provider, { type: "object" })).toThrowError(
+      /structured output/
+    );
+    expect(() => assertStructuredOutputSupported(provider, undefined)).not.toThrow();
+  });
+
   it("rejects unregistered repos", async () => {
     const { app, db } = makeTestApp();
     const token = issueToken(db, ["task:create", "mode:read-only"]);

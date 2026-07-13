@@ -11,6 +11,7 @@ export const CODEX_PROVIDER_DESCRIPTOR = {
     accountAuth: true,
     cancel: true,
     steer: true,
-    models: false
+    models: false,
+    structuredOutput: true
   }
 } as const satisfies TaskProviderDescriptor;

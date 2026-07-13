@@ -159,6 +159,106 @@ describe("tasks", () => {
     expect(runner.calls[0]?.providerId).toBe("codex");
   });
 
+  it("runs a task with an output schema and exposes sanitized structured output", async () => {
+    const runner = new FakeTaskRunner();
+    runner.structuredOutput = {
+      verdict: "revise",
+      confidence: 0.8,
+      summary: "needs a rewrite of /Users/name/project/outline.md",
+      issues: [{ reason: "path in /tmp/scratch stays structural" }]
+    };
+    const { app, db } = makeTestApp({ taskRunner: runner });
+    const token = issueToken(db, ["task:create", "task:read", "repo:local-agent-gateway", "mode:read-only"]);
+
+    const schema = { type: "object", properties: { verdict: { type: "string" } } };
+    const response = await app.inject({
+      method: "POST",
+      url: "/v1/tasks",
+      headers: authHeader(token.token),
+      payload: {
+        repo: "local-agent-gateway",
+        prompt: "Review this artifact",
+        mode: "read-only",
+        outputSchema: schema
+      }
+    });
+
+    expect(response.statusCode).toBe(202);
+    expect(runner.calls[0]?.outputSchema).toEqual(schema);
+
+    const task = await waitForTask(app, token.token, response.json().taskId as string);
+    expect(task.status).toBe("completed");
+    // String leaves are scrubbed; JSON structure and non-string values survive.
+    expect(task.structuredOutput).toEqual({
+      verdict: "revise",
+      confidence: 0.8,
+      summary: "needs a rewrite of [redacted-path]",
+      issues: [{ reason: "path in [redacted-path] stays structural" }]
+    });
+  });
+
+  it("returns null structured output for tasks created without a schema", async () => {
+    const runner = new FakeTaskRunner();
+    const { app, db } = makeTestApp({ taskRunner: runner });
+    const token = issueToken(db, ["task:create", "task:read", "repo:local-agent-gateway", "mode:read-only"]);
+
+    const response = await app.inject({
+      method: "POST",
+      url: "/v1/tasks",
+      headers: authHeader(token.token),
+      payload: {
+        repo: "local-agent-gateway",
+        prompt: "Read README",
+        mode: "read-only"
+      }
+    });
+
+    expect(runner.calls[0]?.outputSchema).toBeUndefined();
+    const task = await waitForTask(app, token.token, response.json().taskId as string);
+    expect(task.structuredOutput).toBeNull();
+  });
+
+  it("rejects an outputSchema that is not an object", async () => {
+    const { app, db } = makeTestApp({ taskRunner: new FakeTaskRunner() });
+    const token = issueToken(db, ["task:create", "repo:local-agent-gateway", "mode:read-only"]);
+
+    for (const outputSchema of ["not-an-object", 42, ["array"]]) {
+      const response = await app.inject({
+        method: "POST",
+        url: "/v1/tasks",
+        headers: authHeader(token.token),
+        payload: {
+          repo: "local-agent-gateway",
+          prompt: "Review",
+          mode: "read-only",
+          outputSchema
+        }
+      });
+      expect(response.statusCode).toBe(400);
+      expect(response.json().error.code).toBe("VALIDATION_ERROR");
+    }
+  });
+
+  it("rejects an oversized outputSchema", async () => {
+    const { app, db } = makeTestApp({ taskRunner: new FakeTaskRunner() });
+    const token = issueToken(db, ["task:create", "repo:local-agent-gateway", "mode:read-only"]);
+
+    const response = await app.inject({
+      method: "POST",
+      url: "/v1/tasks",
+      headers: authHeader(token.token),
+      payload: {
+        repo: "local-agent-gateway",
+        prompt: "Review",
+        mode: "read-only",
+        outputSchema: { padding: "x".repeat(17_000) }
+      }
+    });
+
+    expect(response.statusCode).toBe(400);
+    expect(response.json().error.code).toBe("VALIDATION_ERROR");
+  });
+
   it("rejects workspace-write when token lacks workspace-write scope", async () => {
     const { app, db } = makeTestApp();
     const token = issueToken(db, ["task:create", "task:read", "repo:local-agent-gateway", "mode:read-only"]);

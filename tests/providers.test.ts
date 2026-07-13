@@ -26,7 +26,8 @@ describe("providers", () => {
             accountAuth: true,
             cancel: true,
             steer: true,
-            models: false
+            models: false,
+            structuredOutput: true
           }
         }
       ]

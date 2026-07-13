@@ -123,6 +123,7 @@ export class CodexAppServerClient implements TaskRunner, CodexAccountClient {
     threadId?: string;
     mode: TaskMode;
     providerId?: string;
+    outputSchema?: Record<string, unknown>;
     onEvent?: (event: NewTaskEvent) => void | Promise<void>;
     onControlHandle?: (handle: TaskControlHandle) => void;
   }): Promise<TaskRunResult> {
@@ -155,6 +156,7 @@ export class CodexAppServerClient implements TaskRunner, CodexAccountClient {
       threadId?: string;
       mode: TaskMode;
       providerId?: string;
+      outputSchema?: Record<string, unknown>;
       onEvent?: (event: NewTaskEvent) => void | Promise<void>;
       onControlHandle?: (handle: TaskControlHandle) => void;
     }
@@ -183,7 +185,8 @@ export class CodexAppServerClient implements TaskRunner, CodexAccountClient {
       input: [{ type: "text", text: params.prompt }],
       cwd: params.cwd,
       approvalPolicy: "never",
-      sandboxPolicy: toAppServerSandboxPolicy(params.mode, params.cwd)
+      sandboxPolicy: toAppServerSandboxPolicy(params.mode, params.cwd),
+      ...(params.outputSchema ? { outputSchema: params.outputSchema } : {})
     });
     const turnId = turnResult.turn?.id;
     if (!turnId) {
@@ -200,12 +203,17 @@ export class CodexAppServerClient implements TaskRunner, CodexAccountClient {
     });
 
     const collected = await this.collectTurn(transport, params.cwd, turnId, params.onEvent);
+    let structuredOutput: Record<string, unknown> | undefined;
+    if (params.outputSchema && !collected.interrupted) {
+      structuredOutput = parseStructuredFinalAnswer(collected.summary);
+    }
     return {
       provider: "codex",
       backend: "app-server",
       threadId,
       summary: sanitizePublicText(collected.summary || "Task completed"),
-      changedFiles: collected.changedFiles
+      changedFiles: collected.changedFiles,
+      ...(structuredOutput ? { structuredOutput } : {})
     };
   }
 
@@ -237,7 +245,7 @@ export class CodexAppServerClient implements TaskRunner, CodexAccountClient {
     repoRoot: string,
     turnId: string,
     onEvent?: (event: NewTaskEvent) => void | Promise<void>
-  ): Promise<{ summary: string; changedFiles: string[] }> {
+  ): Promise<{ summary: string; changedFiles: string[]; interrupted: boolean }> {
     const changedFiles = new Set<string>();
     let finalSummary = "";
     let latestSummary = "";
@@ -283,12 +291,14 @@ export class CodexAppServerClient implements TaskRunner, CodexAccountClient {
         if (turn?.status === "interrupted") {
           return {
             summary: finalSummary || latestSummary || "Task interrupted",
-            changedFiles: [...changedFiles].sort()
+            changedFiles: [...changedFiles].sort(),
+            interrupted: true
           };
         }
         return {
           summary: finalSummary || latestSummary,
-          changedFiles: [...changedFiles].sort()
+          changedFiles: [...changedFiles].sort(),
+          interrupted: false
         };
       }
     }
@@ -407,6 +417,28 @@ function parseDeviceCodeLogin(result: unknown): DeviceCodeLogin {
     verificationUrl: candidate.verificationUrl,
     userCode: candidate.userCode
   };
+}
+
+function parseStructuredFinalAnswer(text: string): Record<string, unknown> {
+  // The spike against codex-cli 0.144.0 showed the final answer arrives as
+  // bare schema-valid JSON, but tolerate a fenced form defensively -- a
+  // model regression here should degrade to a clear failure, not silence.
+  let candidate = text.trim();
+  const fenced = candidate.match(/^```(?:json)?\s*\n?([\s\S]*?)\n?```$/);
+  if (fenced?.[1] !== undefined) {
+    candidate = fenced[1].trim();
+  }
+
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(candidate);
+  } catch {
+    throw new ApiError("STRUCTURED_OUTPUT_INVALID", "Task final answer was not valid JSON");
+  }
+  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+    throw new ApiError("STRUCTURED_OUTPUT_INVALID", "Task final answer was not a JSON object");
+  }
+  return parsed as Record<string, unknown>;
 }
 
 function classifyCodexError(error: unknown): ApiError {
