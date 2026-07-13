@@ -1,5 +1,6 @@
 import { CODEX_PROVIDER_DESCRIPTOR } from "../codex/provider.js";
-import type { TaskProviderDescriptor } from "./task-provider.js";
+import type { TaskProviderAdapter, TaskProviderDescriptor } from "./task-provider.js";
+import type { TaskRunner } from "./task-runner.js";
 import { ApiError } from "../utils/errors.js";
 
 export const TASK_PROVIDER_DESCRIPTORS = [CODEX_PROVIDER_DESCRIPTOR] as const satisfies readonly TaskProviderDescriptor[];
@@ -27,4 +28,8 @@ export function getTaskProviderDescriptor(providerId: string): TaskProviderDescr
     label: provider.label,
     capabilities: { ...provider.capabilities }
   };
+}
+
+export function taskRunnerMapFromAdapters(adapters: readonly TaskProviderAdapter[]): Record<string, TaskRunner> {
+  return Object.fromEntries(adapters.map((adapter) => [adapter.descriptor.id, adapter.runner]));
 }

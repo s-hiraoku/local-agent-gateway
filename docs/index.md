@@ -61,6 +61,7 @@ cp .env.example .env
 | `CODEX_APP_SERVER_TURN_TIMEOUT_MS` | App Server の turn 完了待ちタイムアウト。 |
 | `CODEXGW_MAX_PARALLEL_READ_TASKS` | 並行実行できる read-only タスク数。既定は `4`。超過分はプロセス内キューで待機する。 |
 | `CODEXGW_ALLOWED_REPOS_JSON` | Gateway が操作できるリポジトリ allowlist。production では必須。 |
+| `CODEXGW_WORKSPACES_JSON` | 任意。公開 `workspaceId` と repo/mode/provider policy の registry。省略時は allowlist 済み repo ごとに同名 workspace を導出する。 |
 | `TOKEN_PEPPER` | トークンハッシュ用の長いランダム秘密値。production では既定値不可。 |
 | `BOOTSTRAP_ADMIN_TOKEN` | 初回トークン作成用の一時管理トークン。production では設定不可。 |
 
@@ -73,6 +74,21 @@ cp .env.example .env
     "path": "/absolute/path/to/local-agent-gateway",
     "defaultMode": "read-only",
     "allowedModes": ["read-only", "workspace-write"]
+  }
+]
+```
+
+`CODEXGW_WORKSPACES_JSON` を設定すると、外部クライアントは raw path ではなく `workspaceId` でタスク対象を選べます。`repo` は上の allowlist に存在する必要があります。
+
+```json
+[
+  {
+    "id": "main",
+    "repo": "local-agent-gateway",
+    "defaultMode": "read-only",
+    "allowedModes": ["read-only"],
+    "defaultProvider": "codex",
+    "allowedProviders": ["codex"]
   }
 ]
 ```
@@ -119,6 +135,7 @@ curl -X POST http://127.0.0.1:8787/v1/tokens \
       "codex:account:login",
       "codex:account:logout",
       "repo:local-agent-gateway",
+      "workspace:local-agent-gateway",
       "mode:read-only",
       "mode:workspace-write",
       "provider:codex"
@@ -146,6 +163,7 @@ curl -X POST http://127.0.0.1:8787/v1/tokens \
 | `codex:account:login` | ChatGPT device-code login を開始またはキャンセルできる。 |
 | `codex:account:logout` | Codex からログアウトできる。 |
 | `repo:<repoId>` | 指定リポジトリを対象にできる。 |
+| `workspace:<workspaceId>` | 指定 workspace target を対象にできる。workspace task 作成には対応する `repo:<repoId>` も必要。 |
 | `mode:read-only` | 読み取り専用タスクを作成できる。 |
 | `mode:workspace-write` | workspace-write タスクを作成できる。 |
 | `provider:<providerId>` | 指定 task provider を明示利用できる。現行の既定 provider は `codex`。 |
@@ -171,6 +189,32 @@ curl http://127.0.0.1:8787/v1/repos \
     {
       "id": "local-agent-gateway",
       "defaultMode": "read-only"
+    }
+  ]
+}
+```
+
+## Workspace 一覧
+
+呼び出し元トークンが `workspace:<workspaceId>` と対応する `repo:<repoId>` の両方を持つ workspace だけを返します。内部パス、raw `cwd`、symlink-resolved path は返しません。
+
+```bash
+curl http://127.0.0.1:8787/v1/workspaces \
+  -H "Authorization: Bearer $CODEXGW_TOKEN"
+```
+
+レスポンス例:
+
+```json
+{
+  "workspaces": [
+    {
+      "workspaceId": "local-agent-gateway",
+      "repo": "local-agent-gateway",
+      "defaultMode": "read-only",
+      "allowedModes": ["read-only", "workspace-write"],
+      "defaultProvider": "codex",
+      "allowedProviders": ["codex"]
     }
   ]
 }
@@ -244,7 +288,7 @@ curl -X POST http://127.0.0.1:8787/v1/codex/account/logout \
 
 ## タスク作成
 
-タスク作成には `task:create`、`repo:<repoId>`、`mode:<mode>` が必要です。`mode` を省略すると、サーバー側で定義された対象リポジトリの既定モードが使われます。`provider` を省略すると `codex` が使われます。
+タスク作成には `task:create`、target scope、`mode:<mode>` が必要です。target は `repo` または `workspaceId` のどちらか一方だけを指定します。`workspaceId` を使う場合は `workspace:<workspaceId>` と対応する `repo:<repoId>` の両方が必要です。`mode` や `provider` を省略すると、サーバー側で定義された target policy の既定値が使われます。
 
 `POST /v1/tasks` は Codex の実行完了を待たず、`202 Accepted` と Gateway の `taskId` を返します。外部ツールはこの `taskId` を保存し、`GET /v1/tasks/:id` を polling して `completed` または `failed` を確認します。
 
@@ -259,6 +303,19 @@ curl -X POST http://127.0.0.1:8787/v1/tasks \
   -d '{
     "repo": "local-agent-gateway",
     "provider": "codex",
+    "prompt": "READMEを読んで改善案を出してください",
+    "mode": "read-only"
+  }'
+```
+
+workspace target で作成する場合:
+
+```bash
+curl -X POST http://127.0.0.1:8787/v1/tasks \
+  -H "Authorization: Bearer $CODEXGW_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "workspaceId": "local-agent-gateway",
     "prompt": "READMEを読んで改善案を出してください",
     "mode": "read-only"
   }'
@@ -374,7 +431,7 @@ curl 'http://127.0.0.1:8787/v1/audit-logs?action=tasks:create&limit=20' \
   -H "Authorization: Bearer $ADMIN_TOKEN"
 ```
 
-外部クライアント統合の設計方針は [`CLIENT_INTEGRATION.md`](CLIENT_INTEGRATION.md)、event stream の詳細は [`EVENT_STREAMING.md`](EVENT_STREAMING.md)、workspace target の将来設計は [`WORKSPACE_TARGETS.md`](WORKSPACE_TARGETS.md)、task control のguardrailは [`TASK_CONTROL.md`](TASK_CONTROL.md) を参照してください。
+外部クライアント統合の設計方針は [`CLIENT_INTEGRATION.md`](CLIENT_INTEGRATION.md)、event stream の詳細は [`EVENT_STREAMING.md`](EVENT_STREAMING.md)、workspace target の詳細は [`WORKSPACE_TARGETS.md`](WORKSPACE_TARGETS.md)、task control のguardrailは [`TASK_CONTROL.md`](TASK_CONTROL.md) を参照してください。
 
 ## トークン管理
 
@@ -390,6 +447,7 @@ curl -X POST http://127.0.0.1:8787/v1/tokens \
       "task:create",
       "task:read",
       "repo:local-agent-gateway",
+      "workspace:local-agent-gateway",
       "mode:read-only"
     ],
     "expiresInDays": 30
@@ -434,6 +492,7 @@ curl -X DELETE http://127.0.0.1:8787/v1/tokens/tok_... \
 | `TOKEN_EXPIRED` | トークンの有効期限切れ。 |
 | `TOKEN_REVOKED` | トークンが失効済み。 |
 | `REPO_NOT_ALLOWED` | allowlist にないリポジトリを指定した。 |
+| `WORKSPACE_NOT_ALLOWED` | registry にない workspace を指定した。 |
 | `PROVIDER_NOT_ALLOWED` | 登録されていない、または runner が接続されていない provider を指定した。 |
 | `MODE_NOT_ALLOWED` | 対象リポジトリで許可されていないモードを指定した。 |
 | `CODEX_NOT_CONFIGURED` | Codex 実行環境が未設定。 |
@@ -444,6 +503,7 @@ curl -X DELETE http://127.0.0.1:8787/v1/tokens/tok_... \
 - production では `TOKEN_PEPPER` を長いランダム値に変更する。
 - production では `BOOTSTRAP_ADMIN_TOKEN` を設定しない。
 - production では `CODEXGW_ALLOWED_REPOS_JSON` に公開してよい `repoId` とサーバー内の実パスを明示する。
+- `workspaceId` は server-side registry でのみ解決し、client から raw path や workspace path を受け取らない。
 - `CODEXGW_MAX_PARALLEL_READ_TASKS` をローカルマシンの CPU、メモリ、Codex 利用量に合わせて調整する。
 - 外部公開時は API の前段に認証・アクセス制御レイヤーを置く。
 - トークンは用途ごとに短い有効期限と最小スコープで発行する。

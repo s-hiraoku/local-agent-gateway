@@ -1,6 +1,6 @@
 # Workspace Targets
 
-Workspace targets are a future server-side abstraction for selecting where a task runs without exposing raw filesystem paths to public clients.
+Workspace targets are a server-side abstraction for selecting where a task runs without exposing raw filesystem paths to public clients.
 
 This design is intentionally client-neutral. A workspace target can be used by a CLI tool, web dashboard, desktop app, automation bot, MCP integration, CI helper, or other developer tool.
 
@@ -11,53 +11,67 @@ This design is intentionally client-neutral. A workspace target can be used by a
 - Preserve repo allowlist, token scope, sandbox mode, audit, and path scrubbing.
 - Support future diff artifacts, task control, and task resume flows.
 
-## Proposed Model
+## Implemented Model
 
-Introduce opaque IDs:
+Implemented opaque ID:
 
 - `workspaceId`: a stable registered workspace target.
-- `targetId`: an optional task-specific target derived from a workspace.
 
-The Gateway stores the internal absolute path server-side. Clients pass only opaque IDs.
+The Gateway resolves a workspace to an allowlisted repo and target policy server-side. Clients pass only opaque IDs.
 
-Every stored path must validate against one of:
+Current registry fields:
 
-- an allowlisted repo root; or
-- an explicitly configured allowlisted workspace root.
+- `workspaceId`;
+- repo ID;
+- default and allowed task modes;
+- default and allowed provider IDs.
 
 The Gateway must reject:
 
 - public absolute paths;
-- relative paths that escape a registered root;
-- symlink-resolved paths outside allowed roots;
 - targets whose repo scope does not match the caller's token;
+- targets whose workspace scope does not match the caller's token;
 - targets whose requested task mode exceeds repo or target policy.
 
-## API Sketch
+## API
 
-No workspace target API is implemented in G1. A future version could add:
+Implemented endpoint:
 
 ```text
 GET /v1/workspaces
-POST /v1/workspaces
-GET /v1/workspaces/:workspaceId
+```
+
+`GET /v1/workspaces` requires `task:read` and returns only workspaces for which the caller has both `workspace:<workspaceId>` and matching `repo:<repoId>`.
+
+Implemented task creation:
+
+```text
 POST /v1/tasks
 ```
 
-`POST /v1/tasks` could accept either the current `repo` field or a future `workspaceId`, but never a raw path.
+`POST /v1/tasks` accepts either `repo` or `workspaceId`, never both. It still rejects `workspacePath`, raw `cwd`, and other target shortcuts through strict request validation.
 
-Until that registry exists:
+## Configuration
 
-- `POST /v1/tasks` accepts `repo` only and rejects `workspaceId`, `workspacePath`, raw `cwd`, or other target shortcuts through strict request validation.
-- `GET /v1/workspaces`, `POST /v1/workspaces`, and `GET /v1/workspaces/:workspaceId` are not public endpoints.
-- Clients must not send absolute paths or workspace roots to task APIs.
+If `CODEXGW_WORKSPACES_JSON` is omitted, the Gateway derives one workspace per allowlisted repo with the same public ID as the repo. To set stricter ceilings, configure a JSON array:
 
-## Required Registry Model
+```json
+[
+  {
+    "id": "main",
+    "repo": "local-agent-gateway",
+    "defaultMode": "read-only",
+    "allowedModes": ["read-only"],
+    "defaultProvider": "codex",
+    "allowedProviders": ["codex"]
+  }
+]
+```
 
-A safe workspace registry must be server-side only. It should store:
+## Future Registry Model
 
-- opaque `workspaceId`;
-- repo ID and mode ceiling;
+A richer workspace registry can remain server-side only and add:
+
 - internal absolute path;
 - symlink-resolved real path;
 - allowed root that authorized the path;
@@ -68,7 +82,9 @@ The registry must validate every stored path before task creation:
 - resolve symlinks before policy checks;
 - require the real path to stay under an allowlisted repo root or configured workspace root;
 - require the caller to hold `repo:<repoId>`;
+- require the caller to hold `workspace:<workspaceId>`;
 - require requested task mode to be allowed by both repo policy and workspace policy;
+- require requested provider to be allowed by workspace policy;
 - never echo internal paths in public responses, audit logs, or events.
 
 If a workspace target cannot be resolved or authorized unambiguously, deny the request.

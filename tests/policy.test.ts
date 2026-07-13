@@ -41,23 +41,40 @@ describe("policy", () => {
     expect(response.json().error.code).toBe("VALIDATION_ERROR");
   });
 
-  it("does not accept workspace target fields before registry support exists", async () => {
+  it("accepts a registered workspace target without exposing raw paths", async () => {
     const { app, db } = makeTestApp();
-    const token = issueToken(db, ["task:create", "repo:local-agent-gateway", "mode:read-only"]);
+    const token = issueToken(db, [
+      "task:create",
+      "task:read",
+      "repo:local-agent-gateway",
+      "workspace:local-agent-gateway",
+      "mode:read-only"
+    ]);
 
-    const workspaceIdResponse = await app.inject({
+    const response = await app.inject({
       method: "POST",
       url: "/v1/tasks",
       headers: authHeader(token.token),
       payload: {
-        repo: "local-agent-gateway",
-        workspaceId: "ws_test",
+        workspaceId: "local-agent-gateway",
         prompt: "Summarize",
         mode: "read-only"
       }
     });
 
-    const workspacePathResponse = await app.inject({
+    expect(response.statusCode).toBe(202);
+    expect(response.json()).toMatchObject({
+      repo: "local-agent-gateway",
+      mode: "read-only"
+    });
+    expect(JSON.stringify(response.json())).not.toContain(process.cwd());
+  });
+
+  it("rejects raw workspace paths on task creation", async () => {
+    const { app, db } = makeTestApp();
+    const token = issueToken(db, ["task:create", "repo:local-agent-gateway", "mode:read-only"]);
+
+    const response = await app.inject({
       method: "POST",
       url: "/v1/tasks",
       headers: authHeader(token.token),
@@ -69,34 +86,78 @@ describe("policy", () => {
       }
     });
 
-    expect(workspaceIdResponse.statusCode).toBe(400);
-    expect(workspaceIdResponse.json().error.code).toBe("VALIDATION_ERROR");
-    expect(workspacePathResponse.statusCode).toBe(400);
-    expect(workspacePathResponse.json().error.code).toBe("VALIDATION_ERROR");
+    expect(response.statusCode).toBe(400);
+    expect(response.json().error.code).toBe("VALIDATION_ERROR");
   });
 
-  it("does not expose workspace registry endpoints before target policy exists", async () => {
+  it("lists registered workspace targets without exposing raw paths", async () => {
     const { app, db } = makeTestApp();
-    const token = issueToken(db, ["task:read", "repo:local-agent-gateway"]);
+    const token = issueToken(db, ["task:read", "repo:local-agent-gateway", "workspace:local-agent-gateway"]);
 
-    const listResponse = await app.inject({
+    const response = await app.inject({
       method: "GET",
       url: "/v1/workspaces",
       headers: authHeader(token.token)
     });
 
-    const createResponse = await app.inject({
+    expect(response.statusCode).toBe(200);
+    expect(response.json()).toMatchObject({
+      workspaces: [
+        {
+          workspaceId: "local-agent-gateway",
+          repo: "local-agent-gateway",
+          defaultMode: "read-only",
+          allowedModes: ["read-only", "workspace-write"],
+          defaultProvider: "codex",
+          allowedProviders: ["codex"]
+        }
+      ]
+    });
+    expect(JSON.stringify(response.json())).not.toContain(process.cwd());
+  });
+
+  it("requires workspace scope when creating a task from a workspace target", async () => {
+    const { app, db } = makeTestApp();
+    const token = issueToken(db, ["task:create", "repo:local-agent-gateway", "mode:read-only"]);
+
+    const response = await app.inject({
       method: "POST",
-      url: "/v1/workspaces",
+      url: "/v1/tasks",
       headers: authHeader(token.token),
       payload: {
-        path: "/tmp/other",
-        repo: "local-agent-gateway"
+        workspaceId: "local-agent-gateway",
+        prompt: "Summarize",
+        mode: "read-only"
       }
     });
 
-    expect(listResponse.statusCode).toBe(404);
-    expect(createResponse.statusCode).toBe(404);
+    expect(response.statusCode).toBe(403);
+    expect(response.json().error.code).toBe("FORBIDDEN");
+  });
+
+  it("rejects ambiguous repo and workspace task targets", async () => {
+    const { app, db } = makeTestApp();
+    const token = issueToken(db, [
+      "task:create",
+      "repo:local-agent-gateway",
+      "workspace:local-agent-gateway",
+      "mode:read-only"
+    ]);
+
+    const response = await app.inject({
+      method: "POST",
+      url: "/v1/tasks",
+      headers: authHeader(token.token),
+      payload: {
+        repo: "local-agent-gateway",
+        workspaceId: "local-agent-gateway",
+        prompt: "Summarize",
+        mode: "read-only"
+      }
+    });
+
+    expect(response.statusCode).toBe(400);
+    expect(response.json().error.code).toBe("VALIDATION_ERROR");
   });
 
   it("uses read-only as the default mode", async () => {

@@ -32,6 +32,7 @@ cp .env.example .env
 Set `CODEXGW_ALLOWED_REPOS_JSON` to the repos this gateway may operate on, and set a long random `TOKEN_PEPPER`. `BOOTSTRAP_ADMIN_TOKEN` is only for local bootstrap and is refused in production.
 By default the gateway starts `codex app-server` using `CODEX_APP_SERVER_COMMAND=codex`. Set `CODEX_APP_SERVER_MODEL` when the local Codex config points at a model that is not supported by the authenticated account or installed CLI.
 Set `CODEXGW_MAX_PARALLEL_READ_TASKS` to bound concurrent read-only Codex runs; the default is `4`.
+Set `CODEXGW_WORKSPACES_JSON` when you want stable workspace IDs with mode/provider ceilings. If omitted, the gateway derives one workspace per allowed repo.
 
 Example repo allowlist:
 
@@ -101,6 +102,7 @@ curl -X POST http://127.0.0.1:8787/v1/tokens \
       "codex:account:login",
       "codex:account:logout",
       "repo:local-agent-gateway",
+      "workspace:local-agent-gateway",
       "mode:read-only",
       "mode:workspace-write",
       "provider:codex"
@@ -120,6 +122,7 @@ Unauthenticated:
 Authenticated:
 
 - `GET /v1/repos` requires `task:read`; returns only repos covered by the caller's `repo:<repoId>` scopes.
+- `GET /v1/workspaces` requires `task:read`; returns workspace IDs covered by both `workspace:<workspaceId>` and matching `repo:<repoId>` scopes without raw paths.
 - `GET /v1/providers` requires `task:read`; returns available task provider IDs and public capabilities without backend internals.
 - `POST /v1/tokens` requires `token:create`; tokens cannot mint scopes they do not already have, and child tokens cannot outlive their issuer.
 - `GET /v1/tokens` requires `token:read`; never returns raw tokens or token hashes.
@@ -128,7 +131,7 @@ Authenticated:
 - `POST /v1/codex/account/login/device-code` requires `codex:account:login`; starts ChatGPT device-code login and returns only `loginId`, `verificationUrl`, and `userCode`.
 - `POST /v1/codex/account/login/cancel` requires `codex:account:login`; cancels a pending device-code login by `loginId`.
 - `POST /v1/codex/account/logout` requires `codex:account:logout`; signs Codex out through App Server.
-- `POST /v1/tasks` requires `task:create`, `repo:<repoId>`, and `mode:<mode>`; optional `provider` defaults to `codex`. Non-default providers require `provider:<providerId>`. Returns `202 Accepted` with a Gateway `taskId`.
+- `POST /v1/tasks` requires `task:create`, a repo target or workspace target, and `mode:<mode>`. Workspace targets require both `workspace:<workspaceId>` and the matching `repo:<repoId>`. Optional `provider` defaults to the target policy. Non-default providers require `provider:<providerId>`. Returns `202 Accepted` with a Gateway `taskId`.
 - `GET /v1/tasks` requires `task:read`; lists sanitized tasks for repos covered by the caller's `repo:<repoId>` scopes, with optional `repo`, `status`, and `limit` filters.
 - `GET /v1/tasks/:id` allows the creating token to read its own task; other tokens require `task:read` and matching repo scope.
 - `GET /v1/tasks/:id/events` requires the same authorization as `GET /v1/tasks/:id`; replays sanitized task events as Server-Sent Events.
@@ -146,6 +149,19 @@ curl -X POST http://127.0.0.1:8787/v1/tasks \
   -d '{
     "repo": "local-agent-gateway",
     "provider": "codex",
+    "prompt": "READMEを読んで改善案を出してください",
+    "mode": "read-only"
+  }'
+```
+
+Workspace task example:
+
+```bash
+curl -X POST http://127.0.0.1:8787/v1/tasks \
+  -H "Authorization: Bearer $CODEXGW_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "workspaceId": "local-agent-gateway",
     "prompt": "READMEを読んで改善案を出してください",
     "mode": "read-only"
   }'
@@ -169,6 +185,7 @@ curl 'http://127.0.0.1:8787/v1/tasks?repo=local-agent-gateway&status=completed&l
 
 - No raw `cwd` API.
 - Repositories resolve only through the server-side allowlist in `CODEXGW_ALLOWED_REPOS_JSON`; production startup refuses a missing allowlist.
+- Workspace targets resolve only through the server-side registry in `CODEXGW_WORKSPACES_JSON` or the derived repo workspace registry; public APIs never accept workspace paths.
 - Default task mode is `read-only`.
 - Public task modes are only `read-only` and `workspace-write`.
 - Public task providers are selected by registered provider IDs. The default provider is `codex`; future non-default providers require explicit `provider:<providerId>` scopes.

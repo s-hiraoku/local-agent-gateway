@@ -6,11 +6,13 @@ import { openDatabase } from "./db/connection.js";
 import { migrate } from "./db/migrate.js";
 import { CodexClient, type CodexAccountClient } from "./codex/client.js";
 import type { TaskRunner } from "./provider/task-runner.js";
+import type { TaskProviderAdapter } from "./provider/task-provider.js";
 import { authMiddleware } from "./auth/middleware.js";
 import { writeAuditLog } from "./audit/audit-log.js";
 import { ApiError, installErrorHandler } from "./utils/errors.js";
 import { healthRoutes } from "./routes/health.js";
 import { reposRoutes } from "./routes/repos.js";
+import { workspacesRoutes } from "./routes/workspaces.js";
 import { providersRoutes } from "./routes/providers.js";
 import { tokenRoutes } from "./routes/tokens.js";
 import { taskRoutes } from "./routes/tasks.js";
@@ -20,12 +22,13 @@ import { TaskQueue } from "./tasks/task-queue.js";
 import { ActiveTaskSessions } from "./tasks/active-sessions.js";
 import { auditLogRoutes } from "./routes/audit-logs.js";
 import { failIncompleteTasksOnStartup } from "./tasks/tasks.js";
-import { DEFAULT_TASK_PROVIDER_ID } from "./provider/registry.js";
+import { DEFAULT_TASK_PROVIDER_ID, taskRunnerMapFromAdapters } from "./provider/registry.js";
 
 export type AppDeps = {
   config: AppConfig;
   db?: Db;
   taskRunner?: TaskRunner;
+  taskProviderAdapters?: readonly TaskProviderAdapter[];
   taskRunners?: Record<string, TaskRunner>;
   codexRunner?: TaskRunner;
   codexAccountClient?: CodexAccountClient;
@@ -50,7 +53,9 @@ export function buildApp(deps: AppDeps) {
   const providedTaskRunner = deps.taskRunner ?? deps.codexRunner;
   const defaultCodex = providedTaskRunner && deps.codexAccountClient ? null : new CodexClient(deps.config);
   const taskRunner = providedTaskRunner ?? (defaultCodex as CodexClient);
-  const taskRunners = deps.taskRunners ?? { [DEFAULT_TASK_PROVIDER_ID]: taskRunner };
+  const taskRunners =
+    deps.taskRunners ??
+    (deps.taskProviderAdapters ? taskRunnerMapFromAdapters(deps.taskProviderAdapters) : { [DEFAULT_TASK_PROVIDER_ID]: taskRunner });
   const codexAccountClient = deps.codexAccountClient ?? (defaultCodex as CodexClient);
   const liveTaskEvents = deps.liveTaskEvents ?? new LiveTaskEvents();
   const taskQueue = deps.taskQueue ?? new TaskQueue(deps.config.CODEXGW_MAX_PARALLEL_READ_TASKS);
@@ -88,6 +93,7 @@ export function buildApp(deps: AppDeps) {
   void app.register(async (protectedApp) => {
     protectedApp.addHook("preHandler", authenticate);
     await protectedApp.register(reposRoutes);
+    await protectedApp.register(workspacesRoutes);
     await protectedApp.register(providersRoutes);
     await protectedApp.register(tokenRoutes, { db, config: deps.config });
     await protectedApp.register(auditLogRoutes, { db });
