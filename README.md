@@ -8,7 +8,7 @@ OpenAI's Codex App Server WebSocket transport is documented as experimental and 
 
 ## User Guide
 
-The GitHub Pages-ready user guide lives in [`docs/index.md`](docs/index.md). Operational quality gates are in [`docs/QUALITY.md`](docs/QUALITY.md), and the Codex-facing repository policy template is [`policy_template.md`](policy_template.md). Pages is deployed by `.github/workflows/pages.yml` whenever `main` changes the docs or the workflow.
+The GitHub Pages-ready user guide lives in [`docs/index.md`](docs/index.md). The target multi-capability Gateway design is documented in [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md), operational quality gates are in [`docs/QUALITY.md`](docs/QUALITY.md), and the Codex-facing repository policy template is [`policy_template.md`](policy_template.md). Pages is deployed by `.github/workflows/pages.yml` whenever `main` changes the docs or the workflow.
 
 ## Development
 

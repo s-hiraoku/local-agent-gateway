@@ -4,6 +4,8 @@ This project is a personal Local Agent Gateway API server. It is for safely dele
 
 External clients can include CLI tools, web dashboards, desktop apps, mobile apps, automation bots, MCP integrations, CI helpers, and other developer tools. This repository does not implement any of those clients.
 
+The current API is the Codex coding capability of a broader planned Gateway. The target design keeps Codex App Server for subscription-backed coding work and adds selected image and audio operations through server-side OpenAI Platform credentials. See [`ARCHITECTURE.md`](ARCHITECTURE.md) for the capability boundaries, credential and billing separation, future job and artifact model, and APIs that must not become generic proxies.
+
 ## Current Architecture
 
 - Fastify exposes the authenticated Gateway API.
