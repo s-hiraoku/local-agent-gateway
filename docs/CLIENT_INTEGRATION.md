@@ -92,6 +92,17 @@ Implemented after G1:
 
 Clients cannot pass raw paths, shell commands, git arguments, or workspace roots to this endpoint.
 
+## Structured Output
+
+Implemented after task control:
+
+- `POST /v1/tasks` accepts an optional `outputSchema` JSON Schema object (at most 16,000 serialized characters). The provider must declare the `structuredOutput` capability; requesting a schema from a provider without it fails closed with `PROVIDER_NOT_ALLOWED`.
+- When a schema is set, the task's final answer is parsed as JSON and stored as a structured artifact. A final answer that does not parse fails the task with `STRUCTURED_OUTPUT_INVALID` — it never completes silently without the promised structure.
+- `GET /v1/tasks/:id` returns the artifact as `structuredOutput` (`null` for tasks created without a schema). String leaf values are path-sanitized on egress with a JSON-aware pass, so clients always receive structurally valid JSON.
+- Interrupted tasks skip structured parsing and complete without `structuredOutput`.
+
+This is the integration surface for machine clients that need typed answers (for example, a review tool that requires `{verdict, confidence, summary, issues[]}`) instead of free text. Poll `GET /v1/tasks/:id` until terminal, then read `structuredOutput`.
+
 ## Task Control And Audit Logs
 
 Implemented after diff artifacts:

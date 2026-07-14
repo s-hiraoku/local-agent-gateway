@@ -31,6 +31,11 @@ cp .env.example .env
 
 Set `CODEXGW_ALLOWED_REPOS_JSON` to the repos this gateway may operate on, and set a long random `TOKEN_PEPPER`. `BOOTSTRAP_ADMIN_TOKEN` is only for local bootstrap and is refused in production.
 By default the gateway starts `codex app-server` using `CODEX_APP_SERVER_COMMAND=codex`. Set `CODEX_APP_SERVER_MODEL` when the local Codex config points at a model that is not supported by the authenticated account or installed CLI.
+
+Two operational notes for `CODEX_APP_SERVER_COMMAND`, both observed in real use:
+
+- Prefer an absolute binary path (e.g. `/Users/you/.local/bin/codex`). Node version managers such as volta prepend their own global bin directories to the child `PATH`, where a broken npm-installed `codex` wrapper can shadow the real CLI; the child then exits immediately and its stderr is not currently surfaced in gateway logs.
+- Each task spawns a fresh app-server that loads the full `~/.codex` config, including MCP servers -- each unreachable MCP server adds a ~30s startup timeout to every task. For machine-client workloads that need no MCP (for example structured-output review tasks), point `CODEX_APP_SERVER_COMMAND` at a small wrapper that appends `-c 'mcp_servers={}'`.
 Set `CODEXGW_MAX_PARALLEL_READ_TASKS` to bound concurrent read-only Codex runs; the default is `4`.
 Set `CODEXGW_WORKSPACES_JSON` when you want stable workspace IDs with mode/provider ceilings. If omitted, the gateway derives one workspace per allowed repo.
 
@@ -131,7 +136,7 @@ Authenticated:
 - `POST /v1/codex/account/login/device-code` requires `codex:account:login`; starts ChatGPT device-code login and returns only `loginId`, `verificationUrl`, and `userCode`.
 - `POST /v1/codex/account/login/cancel` requires `codex:account:login`; cancels a pending device-code login by `loginId`.
 - `POST /v1/codex/account/logout` requires `codex:account:logout`; signs Codex out through App Server.
-- `POST /v1/tasks` requires `task:create`, a repo target or workspace target, and `mode:<mode>`. Workspace targets require both `workspace:<workspaceId>` and the matching `repo:<repoId>`. Optional `provider` defaults to the target policy. Non-default providers require `provider:<providerId>`. Returns `202 Accepted` with a Gateway `taskId`.
+- `POST /v1/tasks` requires `task:create`, a repo target or workspace target, and `mode:<mode>`. Workspace targets require both `workspace:<workspaceId>` and the matching `repo:<repoId>`. Optional `provider` defaults to the target policy. Non-default providers require `provider:<providerId>`. Optional `outputSchema` (a JSON Schema object, at most 16,000 serialized characters) constrains the task's final answer to schema-conforming JSON; it requires a provider that declares the `structuredOutput` capability, and a final answer that fails to parse fails the task rather than completing silently. Returns `202 Accepted` with a Gateway `taskId`.
 - `GET /v1/tasks` requires `task:read`; lists sanitized tasks for repos covered by the caller's `repo:<repoId>` scopes, with optional `repo`, `status`, and `limit` filters.
 - `GET /v1/tasks/:id` allows the creating token to read its own task; other tokens require `task:read` and matching repo scope.
 - `GET /v1/tasks/:id/events` requires the same authorization as `GET /v1/tasks/:id`; replays sanitized task events as Server-Sent Events.
@@ -164,6 +169,30 @@ curl -X POST http://127.0.0.1:8787/v1/tasks \
     "workspaceId": "local-agent-gateway",
     "prompt": "READMEを読んで改善案を出してください",
     "mode": "read-only"
+  }'
+```
+
+Structured output task example (the completed task's `structuredOutput`
+field carries the schema-conforming JSON object; string values inside it are
+path-sanitized on egress without breaking the JSON structure):
+
+```bash
+curl -X POST http://127.0.0.1:8787/v1/tasks \
+  -H "Authorization: Bearer $CODEXGW_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "workspaceId": "local-agent-gateway",
+    "prompt": "Review this outline and give a verdict.",
+    "mode": "read-only",
+    "outputSchema": {
+      "type": "object",
+      "properties": {
+        "verdict": { "type": "string", "enum": ["accept", "revise", "reject"] },
+        "confidence": { "type": "number" },
+        "summary": { "type": "string" }
+      },
+      "required": ["verdict", "confidence", "summary"]
+    }
   }'
 ```
 

@@ -71,6 +71,15 @@ export function authorizeTaskCreate(
   return { repo, workspace, mode, provider };
 }
 
+export function assertStructuredOutputSupported(
+  provider: Pick<TaskPolicyResult["provider"], "capabilities">,
+  outputSchema: Record<string, unknown> | undefined
+): void {
+  if (outputSchema && !provider.capabilities.structuredOutput) {
+    throw new ApiError("PROVIDER_NOT_ALLOWED", "Provider does not support structured output");
+  }
+}
+
 export function authorizeTaskRead(request: FastifyRequest, task: { tokenId: string; repo: string }): void {
   if (request.auth?.id === task.tokenId) {
     return;

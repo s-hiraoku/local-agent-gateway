@@ -7,29 +7,44 @@ import type { TaskRunner } from "../provider/task-runner.js";
 import { createTask, getTask, listTasks } from "../tasks/tasks.js";
 import { appendTaskEvent, listTaskEvents, publicTaskEvent } from "../tasks/task-events.js";
 import { getTaskDiffArtifact } from "../tasks/diff-artifacts.js";
-import { authorizeTaskControl, authorizeTaskCreate, authorizeTaskRead } from "../policy/task-policy.js";
+import {
+  assertStructuredOutputSupported,
+  authorizeTaskControl,
+  authorizeTaskCreate,
+  authorizeTaskRead
+} from "../policy/task-policy.js";
 import { listAllowedReposForScopes } from "../policy/repos.js";
 import { requireScopes } from "../auth/authorize.js";
 import { ApiError } from "../utils/errors.js";
 import { hashPrompt } from "../auth/hash.js";
 import { makeId } from "../utils/ids.js";
-import { sanitizePublicText } from "../utils/sanitize.js";
+import { sanitizePublicJson, sanitizePublicText } from "../utils/sanitize.js";
 import type { LiveTaskEvents } from "../tasks/live-events.js";
 import type { TaskQueue } from "../tasks/task-queue.js";
 import type { ActiveTaskSessions } from "../tasks/active-sessions.js";
+
+const MAX_OUTPUT_SCHEMA_LENGTH = 16_000;
 
 const createTaskSchema = z.object({
   repo: z.string().min(1).max(100).optional(),
   workspaceId: z.string().min(1).max(100).regex(/^[A-Za-z0-9._-]+$/).optional(),
   provider: z.string().min(1).max(100).regex(/^[A-Za-z0-9._-]+$/).optional(),
   prompt: z.string().min(1).max(20_000),
-  mode: z.enum(["read-only", "workspace-write"]).optional()
+  mode: z.enum(["read-only", "workspace-write"]).optional(),
+  outputSchema: z.record(z.string(), z.unknown()).optional()
 }).strict().superRefine((body, ctx) => {
   if (Boolean(body.repo) === Boolean(body.workspaceId)) {
     ctx.addIssue({
       code: "custom",
       path: ["repo"],
       message: "Specify exactly one of repo or workspaceId"
+    });
+  }
+  if (body.outputSchema && JSON.stringify(body.outputSchema).length > MAX_OUTPUT_SCHEMA_LENGTH) {
+    ctx.addIssue({
+      code: "custom",
+      path: ["outputSchema"],
+      message: `outputSchema must serialize to at most ${MAX_OUTPUT_SCHEMA_LENGTH} characters`
     });
   }
 });
@@ -57,6 +72,7 @@ function taskResponse(task: TaskRecord) {
     mode: task.mode,
     summary: sanitizePublicText(task.summary),
     changedFiles: task.changedFiles,
+    structuredOutput: task.structuredOutput === null ? null : sanitizePublicJson(task.structuredOutput),
     createdAt: task.createdAt,
     completedAt: task.completedAt,
     error: task.error
@@ -87,6 +103,7 @@ export async function taskRoutes(
     if (!taskRunner) {
       throw new ApiError("PROVIDER_NOT_ALLOWED");
     }
+    assertStructuredOutputSupported(provider, body.outputSchema);
     request.audit = {
       ...request.audit,
       repo: repo.id,
@@ -110,6 +127,7 @@ export async function taskRoutes(
       prompt: body.prompt,
       mode,
       providerId: provider.id,
+      ...(body.outputSchema ? { outputSchema: body.outputSchema } : {}),
       liveEvents: deps.liveTaskEvents,
       activeSessions: deps.activeTaskSessions
     });

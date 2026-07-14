@@ -21,6 +21,7 @@ export type TaskRecord = {
   status: "queued" | "pending" | "completed" | "failed";
   summary: string;
   changedFiles: string[];
+  structuredOutput: Record<string, unknown> | null;
   error: string | null;
   createdAt: string;
   completedAt: string | null;

@@ -143,6 +143,133 @@ describe("CodexAppServerClient", () => {
     });
   });
 
+  it("forwards outputSchema to turn/start and parses the final answer as structured output", async () => {
+    const transport = new FakeJsonRpcTransport();
+    transport.responses.set("initialize", {});
+    transport.responses.set("thread/start", { thread: { id: "thr_test" } });
+    transport.responses.set("turn/start", { turn: { id: "turn_test" } });
+    transport.notifications.push(
+      {
+        method: "item/completed",
+        params: {
+          item: {
+            id: "turn_test",
+            type: "agentMessage",
+            phase: "final_answer",
+            text: '{"verdict":"revise","confidence":0.8,"summary":"needs work in /Users/name/project"}'
+          }
+        }
+      },
+      { method: "turn/completed", params: { turn: { id: "turn_test", status: "completed" } } }
+    );
+
+    const schema = { type: "object", properties: { verdict: { type: "string" } } };
+    const client = new CodexAppServerClient(TEST_CONFIG, { transport });
+    const result = await client.runTask({
+      prompt: "Review",
+      cwd: "/repo",
+      mode: "read-only",
+      outputSchema: schema
+    });
+
+    expect(transport.calls[3]?.params).toMatchObject({ outputSchema: schema });
+    // structuredOutput stays raw at this layer; JSON-aware sanitization
+    // happens on API egress, not here.
+    expect(result.structuredOutput).toEqual({
+      verdict: "revise",
+      confidence: 0.8,
+      summary: "needs work in /Users/name/project"
+    });
+    expect(result.summary).toBe('{"verdict":"revise","confidence":0.8,"summary":"needs work in [redacted-path]"}');
+  });
+
+  it("tolerates a markdown-fenced final answer when a schema was requested", async () => {
+    const transport = new FakeJsonRpcTransport();
+    transport.responses.set("initialize", {});
+    transport.responses.set("thread/start", { thread: { id: "thr_test" } });
+    transport.responses.set("turn/start", { turn: { id: "turn_test" } });
+    transport.notifications.push(
+      {
+        method: "item/completed",
+        params: {
+          item: {
+            id: "turn_test",
+            type: "agentMessage",
+            phase: "final_answer",
+            text: '```json\n{"verdict":"accept"}\n```'
+          }
+        }
+      },
+      { method: "turn/completed", params: { turn: { id: "turn_test", status: "completed" } } }
+    );
+
+    const client = new CodexAppServerClient(TEST_CONFIG, { transport });
+    const result = await client.runTask({
+      prompt: "Review",
+      cwd: "/repo",
+      mode: "read-only",
+      outputSchema: { type: "object" }
+    });
+
+    expect(result.structuredOutput).toEqual({ verdict: "accept" });
+  });
+
+  it("fails closed when the final answer does not parse despite a requested schema", async () => {
+    const transport = new FakeJsonRpcTransport();
+    transport.responses.set("initialize", {});
+    transport.responses.set("thread/start", { thread: { id: "thr_test" } });
+    transport.responses.set("turn/start", { turn: { id: "turn_test" } });
+    transport.notifications.push(
+      {
+        method: "item/completed",
+        params: {
+          item: {
+            id: "turn_test",
+            type: "agentMessage",
+            phase: "final_answer",
+            text: "Sorry, I could not produce JSON."
+          }
+        }
+      },
+      { method: "turn/completed", params: { turn: { id: "turn_test", status: "completed" } } }
+    );
+
+    const client = new CodexAppServerClient(TEST_CONFIG, { transport });
+    await expect(
+      client.runTask({
+        prompt: "Review",
+        cwd: "/repo",
+        mode: "read-only",
+        outputSchema: { type: "object" }
+      })
+    ).rejects.toMatchObject({
+      code: "STRUCTURED_OUTPUT_INVALID",
+      statusCode: 500
+    } satisfies Partial<ApiError>);
+  });
+
+  it("does not attempt structured parsing for an interrupted turn", async () => {
+    const transport = new FakeJsonRpcTransport();
+    transport.responses.set("initialize", {});
+    transport.responses.set("thread/start", { thread: { id: "thr_test" } });
+    transport.responses.set("turn/start", { turn: { id: "turn_test" } });
+    transport.notifications.push({
+      method: "turn/completed",
+      params: { turn: { id: "turn_test", status: "interrupted" } }
+    });
+
+    const client = new CodexAppServerClient(TEST_CONFIG, { transport });
+    const result = await client.runTask({
+      prompt: "Review",
+      cwd: "/repo",
+      mode: "read-only",
+      outputSchema: { type: "object" }
+    });
+
+    expect(result.structuredOutput).toBeUndefined();
+    expect(result.summary).toBe("Task interrupted");
+  });
+
   it("classifies Codex configuration failures separately from runtime failures", async () => {
     const authTransport = new FakeJsonRpcTransport();
     authTransport.responses.set("initialize", new Error("Authentication credentials are not configured"));

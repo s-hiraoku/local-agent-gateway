@@ -95,6 +95,7 @@ export function migrate(db: Db): void {
 
   addColumnIfMissing(db, "tasks", "provider", "TEXT NOT NULL DEFAULT 'codex'");
   addColumnIfMissing(db, "tasks", "backend", "TEXT NOT NULL DEFAULT 'app-server'");
+  addColumnIfMissing(db, "tasks", "structured_output_json", "TEXT");
 }
 
 function addColumnIfMissing(db: Db, table: string, column: string, definition: string): void {

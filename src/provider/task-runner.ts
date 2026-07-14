@@ -7,6 +7,7 @@ export type TaskRunResult = {
   threadId: string;
   summary: string;
   changedFiles: string[];
+  structuredOutput?: Record<string, unknown>;
 };
 
 export type TaskControlHandle = {
@@ -21,6 +22,7 @@ export interface TaskRunner {
     threadId?: string;
     mode: TaskMode;
     providerId?: string;
+    outputSchema?: Record<string, unknown>;
     onEvent?: (event: NewTaskEvent) => void | Promise<void>;
     onControlHandle?: (handle: TaskControlHandle) => void;
   }): Promise<TaskRunResult>;

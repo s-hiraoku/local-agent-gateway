@@ -21,6 +21,7 @@ type TaskRow = {
   status: "queued" | "pending" | "completed" | "failed";
   summary: string;
   changed_files_json: string;
+  structured_output_json: string | null;
   error: string | null;
   created_at: string;
   completed_at: string | null;
@@ -38,6 +39,9 @@ export function parseTaskRow(row: TaskRow): TaskRecord {
     status: row.status,
     summary: row.summary,
     changedFiles: JSON.parse(row.changed_files_json) as string[],
+    structuredOutput: row.structured_output_json
+      ? (JSON.parse(row.structured_output_json) as Record<string, unknown>)
+      : null,
     error: row.error,
     createdAt: row.created_at,
     completedAt: row.completed_at
@@ -55,6 +59,7 @@ export function createTask(
     prompt: string;
     mode: TaskMode;
     providerId: string;
+    outputSchema?: Record<string, unknown>;
     id?: string;
     liveEvents?: LiveTaskEvents;
     activeSessions?: ActiveTaskSessions;
@@ -121,6 +126,7 @@ async function runTask(
     prompt: string;
     mode: TaskMode;
     providerId: string;
+    outputSchema?: Record<string, unknown>;
     liveEvents?: LiveTaskEvents;
     activeSessions?: ActiveTaskSessions;
   }
@@ -143,6 +149,7 @@ async function runTask(
       cwd: params.cwd,
       mode: params.mode,
       providerId: params.providerId,
+      ...(params.outputSchema ? { outputSchema: params.outputSchema } : {}),
       onControlHandle: (handle) => activeSession?.attachHandle(handle),
       onEvent: (event) => {
         if (event.type === "agent.message.completed") {
@@ -173,6 +180,7 @@ async function runTask(
            status = 'completed',
            summary = @summary,
            changed_files_json = @changedFilesJson,
+           structured_output_json = @structuredOutputJson,
            completed_at = @completedAt
        WHERE id = @id`
     ).run({
@@ -182,6 +190,9 @@ async function runTask(
       backend: result.backend,
       summary: sanitizePublicText(result.summary),
       changedFilesJson: JSON.stringify(result.changedFiles),
+      // Stored raw; sanitization happens JSON-aware on egress (taskResponse),
+      // because regex-scrubbing the serialized blob would corrupt the JSON.
+      structuredOutputJson: result.structuredOutput ? JSON.stringify(result.structuredOutput) : null,
       completedAt
     });
     appendAndPublish(db, params.liveEvents, id, {

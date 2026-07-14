@@ -28,6 +28,7 @@ export class FakeTaskRunner implements TaskRunner {
   calls: Array<Parameters<TaskRunner["runTask"]>[0]> = [];
   summary = "task completed";
   changedFiles: string[] = [];
+  structuredOutput: Record<string, unknown> | null = null;
   error: Error | null = null;
 
   async runTask(params: Parameters<TaskRunner["runTask"]>[0]): Promise<TaskRunResult> {
@@ -40,7 +41,8 @@ export class FakeTaskRunner implements TaskRunner {
       backend: "app-server",
       threadId: "thr_test",
       summary: this.summary,
-      changedFiles: this.changedFiles
+      changedFiles: this.changedFiles,
+      ...(this.structuredOutput ? { structuredOutput: this.structuredOutput } : {})
     };
   }
 }

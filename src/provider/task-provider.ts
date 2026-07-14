@@ -9,6 +9,7 @@ export type TaskProviderCapabilities = {
   cancel: boolean;
   steer: boolean;
   models: boolean;
+  structuredOutput: boolean;
 };
 
 export type TaskProviderDescriptor = {
