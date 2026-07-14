@@ -1,135 +1,28 @@
-import { buildApp } from "../src/app.js";
-import { openDatabase, type Db } from "../src/db/connection.js";
-import { migrate } from "../src/db/migrate.js";
-import { createApiToken } from "../src/auth/token.js";
-import type { AppConfig } from "../src/config.js";
-import type { CodexAccountClient, CodexAccountState, DeviceCodeLogin } from "../src/codex/client.js";
-import type { TaskRunner, TaskRunResult } from "../src/provider/task-runner.js";
-import type { LiveTaskEvents } from "../src/tasks/live-events.js";
-import type { ActiveTaskSessions } from "../src/tasks/active-sessions.js";
-import type { TaskQueue } from "../src/tasks/task-queue.js";
+import type { GatewayConfig } from "../src/infrastructure/config.js";
 
-export const TEST_CONFIG: AppConfig = {
-  NODE_ENV: "test",
-  PORT: 8787,
-  HOST: "127.0.0.1",
-  DATABASE_PATH: ":memory:",
-  APP_BACKEND: "codex-app-server",
-  CODEX_APP_SERVER_COMMAND: "codex",
-  CODEX_APP_SERVER_MODEL: undefined,
-  CODEX_APP_SERVER_TURN_TIMEOUT_MS: 1_000,
-  CODEXGW_MAX_PARALLEL_READ_TASKS: 4,
-  CODEXGW_ALLOWED_REPOS_JSON: undefined,
-  TOKEN_PEPPER: "test-pepper",
-  BOOTSTRAP_ADMIN_TOKEN: "bootstrap-secret"
-};
+export const testToken = "test-token-abcdefghijklmnopqrstuvwxyz-123456";
 
-export class FakeTaskRunner implements TaskRunner {
-  calls: Array<Parameters<TaskRunner["runTask"]>[0]> = [];
-  summary = "task completed";
-  changedFiles: string[] = [];
-  structuredOutput: Record<string, unknown> | null = null;
-  error: Error | null = null;
-
-  async runTask(params: Parameters<TaskRunner["runTask"]>[0]): Promise<TaskRunResult> {
-    this.calls.push(params);
-    if (this.error) {
-      throw this.error;
-    }
-    return {
-      provider: "codex",
-      backend: "app-server",
-      threadId: "thr_test",
-      summary: this.summary,
-      changedFiles: this.changedFiles,
-      ...(this.structuredOutput ? { structuredOutput: this.structuredOutput } : {})
-    };
-  }
-}
-
-export const FakeCodexRunner = FakeTaskRunner;
-
-export class FakeCodexAccountClient implements CodexAccountClient {
-  account: CodexAccountState = {
-    account: { type: "chatgpt", email: "user@example.com", planType: "plus" },
-    requiresOpenaiAuth: false
-  };
-  deviceCodeLogin: DeviceCodeLogin = {
-    type: "chatgptDeviceCode",
-    loginId: "login_test",
-    verificationUrl: "https://auth.openai.com/codex/device",
-    userCode: "ABCD-1234"
-  };
-  cancelledLoginId: string | null = null;
-  loggedOut = false;
-
-  async getAccount(): Promise<CodexAccountState> {
-    return this.account;
-  }
-
-  async startDeviceCodeLogin(): Promise<DeviceCodeLogin> {
-    return this.deviceCodeLogin;
-  }
-
-  async cancelLogin(loginId: string): Promise<void> {
-    this.cancelledLoginId = loginId;
-  }
-
-  async logout(): Promise<void> {
-    this.loggedOut = true;
-  }
-}
-
-export function makeTestDb(): Db {
-  const db = openDatabase(":memory:");
-  migrate(db);
-  return db;
-}
-
-export function makeTestApp(
-  options: {
-    db?: Db;
-    taskRunner?: TaskRunner;
-    taskRunners?: Record<string, TaskRunner>;
-    codexRunner?: TaskRunner;
-    codexAccountClient?: CodexAccountClient;
-    liveTaskEvents?: LiveTaskEvents;
-    taskQueue?: TaskQueue;
-    activeTaskSessions?: ActiveTaskSessions;
-  } = {}
-) {
-  const db = options.db ?? makeTestDb();
-  const taskRunner = options.taskRunner ?? options.codexRunner ?? new FakeTaskRunner();
-  const codexAccountClient = options.codexAccountClient ?? new FakeCodexAccountClient();
-  const app = buildApp({
-    config: TEST_CONFIG,
-    db,
-    taskRunner,
-    ...(options.taskRunners ? { taskRunners: options.taskRunners } : {}),
-    codexAccountClient,
-    ...(options.liveTaskEvents ? { liveTaskEvents: options.liveTaskEvents } : {}),
-    ...(options.taskQueue ? { taskQueue: options.taskQueue } : {}),
-    ...(options.activeTaskSessions ? { activeTaskSessions: options.activeTaskSessions } : {})
-  });
-
-  return { app, db, taskRunner, codexRunner: taskRunner, codexAccountClient };
-}
-
-export function issueToken(
-  db: Db,
-  scopes: string[],
-  options: { name?: string; expiresInDays?: number | null } = {}
-) {
-  return createApiToken(db, {
-    name: options.name ?? "test-token",
-    scopes,
-    expiresInDays: options.expiresInDays ?? 30,
-    pepper: TEST_CONFIG.TOKEN_PEPPER
-  });
-}
-
-export function authHeader(token: string) {
+export function testConfig(overrides: Partial<GatewayConfig> = {}): GatewayConfig {
+  const repository = { id: "gateway", path: process.cwd() };
   return {
-    authorization: `Bearer ${token}`
+    host: "127.0.0.1",
+    port: 8787,
+    databasePath: ":memory:",
+    apiToken: testToken,
+    encryptionKey: Buffer.alloc(32, 7),
+    repositories: new Map([[repository.id, repository]]),
+    codexCommand: "codex",
+    codexHome: "/tmp/codexgw-test-home",
+    maxQueuedJobs: 10,
+    maxConcurrentJobs: 1,
+    maxPromptBytes: 64 * 1024,
+    maxResultBytes: 1024 * 1024,
+    maxEventBytes: 64 * 1024,
+    maxEventsPerJob: 10_000,
+    rpcTimeoutMs: 1_000,
+    turnTimeoutMs: 1_000,
+    ...overrides
   };
 }
+
+export const authorization = { authorization: `Bearer ${testToken}` };

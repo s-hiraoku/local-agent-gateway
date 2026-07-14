@@ -1,216 +1,120 @@
-# Architecture Direction
+# V2 Architecture
 
-Local Agent Gateway is intended to become a private AI capability gateway for trusted applications, not a generic proxy for Codex App Server or the OpenAI API.
-
-The current implementation exposes a constrained Codex task API. The target architecture keeps that coding path and adds selected image and audio capabilities through the OpenAI Platform API. Authentication, billing, execution protocols, and policy remain explicit for each capability.
-
-## Product Boundary
-
-The Gateway is the only service that clients call. Clients authenticate with Gateway-issued tokens and never receive or submit backend credentials.
+Local Agent Gateway is a private capability gateway for trusted applications, not a generic proxy for Codex App Server or the OpenAI API. V2 is a clean rewrite with a breaking `/v2` API.
 
 ```text
-trusted client
-    |
-    | Gateway token
-    v
+trusted external app
+        |
+        | Gateway bearer token
+        v
 Local Agent Gateway
-    |-- coding --------> Codex App Server ----> ChatGPT/Codex subscription access
-    |-- image ---------> OpenAI Platform API -> API-key billing
-    |-- audio ---------> OpenAI Platform API -> API-key billing
-    `-- realtime ------> short-lived session -> API-key billing
+  |-- identity and policy
+  |-- durable jobs and encrypted events
+  |-- capability adapters
+        |-- coding -> Codex App Server -> ChatGPT/Codex subscription
+        |-- image  -> OpenAI Platform API -> project billing (planned)
+        `-- audio  -> OpenAI Platform API -> project billing (planned)
 ```
 
-This split is intentional:
+Clients authenticate only to the Gateway. Backend credentials, billing domains, protocols, and policy remain explicit per capability. ChatGPT/Codex subscription access is not presented as a replacement for the OpenAI Platform API.
 
-- Codex App Server is the coding-agent backend. It owns Codex threads, turns, sandboxing, and coding events.
-- OpenAI Platform APIs provide image generation, image editing, transcription, speech generation, and future explicitly approved capabilities.
-- ChatGPT/Codex subscription usage and OpenAI Platform API usage are separate billing and quota domains.
-- Gateway tokens authorize client actions but are never used as upstream OpenAI credentials.
+## Layering
 
-The Gateway must not imply that ChatGPT subscription access is a general replacement for the OpenAI Platform API.
+The codebase separates four concerns:
 
-## Current And Target State
+- `domain`: provider-neutral IDs, job states, events, and public errors;
+- `application`: conversations, durable submission, job claiming, cancellation, and recovery;
+- `adapters`: Codex App Server protocol translation;
+- `infrastructure`: configuration, encryption, SQLite, HTTP, logging, and lifecycle.
 
-Implemented today:
+The domain never exposes Codex thread or turn IDs. The Codex adapter maps a Gateway conversation to an internal App Server thread. A future OpenAI adapter will implement separate capability contracts instead of being forced through coding concepts such as repositories and sandboxes.
 
-- authenticated Codex task creation and task control;
-- repo and workspace allowlists;
-- `read-only` and `workspace-write` policy ceilings;
-- process-local task queues and live event fan-out;
-- persisted task events, audit logs, and diff artifacts;
-- ChatGPT device-code login through Codex App Server.
+## Current vertical slice
 
-Target capabilities, not yet implemented:
+V2 currently supports `coding.turn` in read-only mode:
 
-- image generation and editing;
-- file-based speech-to-text and text-to-speech;
-- managed binary artifacts;
-- OpenAI Platform usage and budget controls;
-- realtime audio sessions;
-- a provider-neutral job model above the existing Codex task model.
+1. A client creates a conversation for a server-registered repository ID.
+2. A turn is submitted with an `Idempotency-Key` and stored as an encrypted durable job.
+3. The worker claims the job and records an attempt.
+4. A fresh App Server process starts with a dedicated `CODEX_HOME` and environment allowlist.
+5. The adapter initializes App Server, starts or resumes its internal thread, and starts a turn with fixed read-only/never-approve policy.
+6. Buffered JSON-RPC notifications are normalized and encrypted before SSE delivery.
+7. The final result is encrypted at rest and returned through the Gateway job resource.
+8. The child process is terminated. Cancellation and shutdown interrupt active turns.
 
-Documentation and public APIs must keep this distinction clear.
+Different conversations may run concurrently. Turns within one conversation are claimed strictly one at a time so its internal Codex thread cannot fork or be overwritten by racing jobs.
 
-## Architecture Principles
+At-least-once recovery is intentional for read-only jobs: an interrupted attempt is marked failed and the job is requeued. This may consume subscription work twice. Write mode must use a different recovery contract.
 
-### Share Gateway Infrastructure, Not Backend Protocols
+## Public API principles
 
-The following concerns should be shared across all capabilities:
-
-- Gateway authentication and scoped authorization;
-- request validation and public error normalization;
-- audit records without secrets or full sensitive inputs;
-- job status, queues, concurrency, and cancellation where supported;
-- normalized public events;
-- artifact ownership, retention, and download authorization;
-- rate, size, duration, and budget limits.
-
-Backend-specific behavior stays behind capability adapters:
-
-- Codex threads, turns, sandbox modes, repos, and changed files belong to coding;
-- image size, quality, input images, and image outputs belong to image operations;
-- audio format, duration, voice, transcripts, and realtime sessions belong to audio operations.
-
-Do not force image or audio work through the existing `TaskRunner` contract. Its `cwd`, sandbox mode, thread, and changed-file concepts are intentionally coding-specific.
-
-### Expose Capabilities, Not Generic Proxies
-
-Public APIs should describe allowed user operations, for example:
+Expose capabilities, not upstream protocols:
 
 ```text
-POST /v1/coding/tasks
-POST /v1/images/generations
-POST /v1/images/edits
-POST /v1/audio/transcriptions
-POST /v1/audio/speech
-GET  /v1/jobs/:id
-GET  /v1/jobs/:id/events
-GET  /v1/artifacts/:id
+POST /v2/conversations
+POST /v2/conversations/:id/turns
+GET  /v2/jobs/:id
+GET  /v2/jobs/:id/events
+POST /v2/jobs/:id/cancel
+
+# planned
+POST /v2/images/generations
+POST /v2/images/edits
+POST /v2/audio/transcriptions
+POST /v2/audio/speech
+GET  /v2/artifacts/:id
 ```
 
-The existing `/v1/tasks` API remains the compatibility surface for Codex tasks unless an explicit breaking change is approved.
+Never add a generic `/openai/*`, arbitrary upstream URL, raw request forwarding, generic App Server JSON-RPC endpoint, raw filesystem API, or client-selected executable.
 
-Do not add a generic `/v1/openai/*`, arbitrary upstream URL, raw request-body forwarding, or unrestricted model proxy. Each new capability needs a strict schema, an explicit scope, a server-side model and option policy, normalized output, audit coverage, and deny-path tests.
+## Persistence
 
-### Separate Jobs From Coding Tasks
+SQLite is the source of truth for conversations, jobs, attempts, idempotency records, and event order. Prompt, result, and event bodies are AES-256-GCM encrypted. Operational metadata such as job state, timestamps, repository ID, attempt number, and event type remains queryable.
 
-A future `job` is the minimal lifecycle shared by heterogeneous work:
+The initial deployment model is one Gateway process on one private host. SQLite uses conditional transactional claims, WAL, foreign keys, busy timeout, schema versioning, and restricted file permissions. A distributed worker system is unnecessary until horizontal execution is a real requirement.
 
-- Gateway job ID;
-- owner token ID;
-- capability or job kind;
-- public provider ID;
-- `queued`, `running`, `completed`, or `failed` status;
-- timestamps and normalized public error;
-- input and output artifact references.
+Generated binary media will not be stored as SQLite blobs. A future artifact layer will store opaque metadata in SQLite and bytes in a Gateway-owned directory or object store with size, media, hash, ownership, and retention checks.
 
-Capability-specific records hold the rest. Codex task rows retain repo, workspace, mode, and internal thread state. Image and audio records hold only their relevant options and artifacts.
+## Security invariants
 
-The initial job kinds should be explicit rather than dynamically invented:
+- no arbitrary shell execution API;
+- no public raw `cwd`, absolute path, Codex ID, command, stderr, or JSON-RPC payload;
+- no `danger-full-access` mode;
+- no client-supplied ChatGPT token, OpenAI API key, or refresh token;
+- no full prompt in logs or plaintext persistence;
+- no personal MCP/config inheritance by default;
+- no unbounded queues, output, events, stderr, or protocol waits;
+- no write mode without task-specific workspace isolation;
+- no capability without positive and negative authorization tests.
 
-```text
-coding.task
-image.generate
-image.edit
-audio.transcribe
-audio.speech
-```
+Read-only is not considered a complete confidentiality boundary. The required host-readable-root isolation is documented in [Threat model](THREAT_MODEL.md).
 
-### Treat Binary Output As Artifacts
-
-Generated images and audio should not be embedded in normal job responses or stored as large SQLite blobs.
-
-SQLite should store artifact metadata such as owner, media type, size, hash, internal storage reference, timestamps, and retention state. File bytes should live in a Gateway-managed storage directory or a future object store. Public APIs expose opaque artifact IDs, never internal paths.
-
-Artifact handling must include:
-
-- upload and output size limits;
-- content-based media validation rather than trusting file names;
-- authorization on every read and delete;
-- retention and cleanup policy;
-- safe download headers;
-- SSRF protection if remote inputs are ever supported.
-
-### Keep Streaming Modes Purpose-Specific
-
-SSE remains suitable for normalized job progress and partial image events. Binary results should be downloaded through artifact endpoints.
-
-Realtime audio has a different lifecycle. A browser or mobile client should normally receive a short-lived session credential created by the Gateway and connect using the supported realtime transport. The long-lived OpenAI API key must remain server-side. Realtime media forwarding should not be added to Fastify by default merely to make every capability look like an SSE task.
-
-## Credentials And Billing
-
-Backend credentials are server-side configuration and must never appear in Gateway request bodies, public events, audit logs, or responses.
+## Credential and usage boundaries
 
 | Backend | Credential source | Usage domain |
 | --- | --- | --- |
-| Codex App Server | local ChatGPT/Codex login or an explicitly supported Codex credential | ChatGPT/Codex plan limits or its configured authentication mode |
-| OpenAI Platform APIs | server-side Platform API credential | OpenAI Platform project billing and rate limits |
-| Gateway clients | Gateway-issued scoped token | Gateway authorization only |
+| Codex App Server | dedicated local ChatGPT/Codex login | ChatGPT/Codex plan limits |
+| OpenAI Platform adapters | server-side project credential | Platform billing and rate limits |
+| Gateway clients | Gateway-issued identity/token | Gateway authorization only |
 
-Operational usage records should keep subscription-backed Codex work separate from Platform API usage. The Gateway should enforce its own per-token and per-capability limits in addition to upstream limits, including concurrency, request rate, file size, audio duration, image count or quality, and configurable spend ceilings.
+Usage records must keep subscription-backed coding separate from Platform API spend. Gateway limits apply in addition to upstream limits.
 
-## Authorization Direction
+## Delivery sequence
 
-Prefer capability scopes over a single broad provider scope:
+1. Prove OS-level execution isolation and real dedicated-`CODEX_HOME` subscription authentication.
+2. Add Codex CLI version/schema contract tests, account status, rate-limit visibility, retention, and telemetry.
+3. Implement write turns in isolated worktrees with patch/commit artifacts and no blind crash retry.
+4. Add encrypted artifact storage and bounded image generation/editing.
+5. Add file transcription and speech generation.
+6. Add Platform usage budgets and per-capability policy.
+7. Add realtime sessions only with a concrete low-latency client requirement.
+8. Add multi-user identity only after tenant isolation and audit requirements are defined.
 
-```text
-coding:create
-coding:read
-coding:control
-image:generate
-image:edit
-audio:transcribe
-audio:speech
-realtime:create
-artifact:read
-```
+Each phase must update public schemas, denial tests, threat model, operational limits, and verification evidence.
 
-Existing `task:*`, repo, workspace, mode, and provider scopes remain valid for the current Codex API. Any migration must be additive until a separately documented compatibility plan exists.
-
-Holding an operation scope must not bypass model, repo, workspace, cost, size, duration, or storage policy.
-
-## Capability Choices
-
-For images, use the Image API for bounded single-request generation or editing. Use image generation through the Responses API only when conversational or multi-turn image editing is an actual product requirement.
-
-For audio, begin with request-based transcription and speech generation. Add realtime sessions separately when live, low-latency interaction is required. Realtime is not merely a faster file-upload endpoint and should have its own policy and session lifecycle.
-
-For general stateful text and tool workflows, evaluate the Responses API as a distinct capability. Do not route them through Codex solely to consume ChatGPT subscription access; Codex remains the coding-agent backend.
-
-Relevant upstream guidance:
+## Upstream references
 
 - [Codex App Server](https://learn.chatgpt.com/docs/app-server.md)
-- [OpenAI authentication for Codex](https://learn.chatgpt.com/docs/auth.md)
-- [Image generation](https://developers.openai.com/api/docs/guides/image-generation)
-- [Audio and speech](https://developers.openai.com/api/docs/guides/audio)
-- [Responses API](https://developers.openai.com/api/reference/responses/overview)
-
-## Security Invariants
-
-Future capability work must preserve the current deny-by-default boundary:
-
-- no arbitrary shell execution;
-- no `danger-full-access` public mode;
-- no public raw `cwd` or arbitrary local path;
-- no generic Codex App Server JSON-RPC proxy;
-- no generic OpenAI API proxy;
-- no client-supplied OpenAI API key, ChatGPT token, refresh token, or Codex session secret;
-- no backend-native thread, session, request, or storage identifiers unless explicitly normalized and proven safe;
-- no full sensitive prompt, audio transcript, or binary input in audit logs;
-- no capability without positive and negative authorization tests.
-
-When convenience conflicts with an unambiguous authorization, credential, cost, filesystem, or retention policy, deny the request.
-
-## Delivery Sequence
-
-A safe incremental path is:
-
-1. Introduce the provider-neutral job and artifact concepts without breaking `/v1/tasks`.
-2. Add bounded image generation, then image editing.
-3. Add file-based transcription, then speech generation.
-4. Add Platform API usage accounting, per-token limits, and spend controls.
-5. Add realtime session creation only after its credential and lifecycle policy is documented.
-6. Add conversational image or general Responses API workflows only for concrete product needs.
-7. Improve Codex thread durability and resume independently from media capabilities.
-
-Each phase should ship with strict schemas, explicit scopes, audit behavior, storage and cleanup rules, denial tests, client documentation, and the verification required by [`QUALITY.md`](QUALITY.md).
+- [Codex authentication](https://learn.chatgpt.com/docs/auth.md)
+- [OpenAI image generation](https://developers.openai.com/api/docs/guides/image-generation)
+- [OpenAI audio and speech](https://developers.openai.com/api/docs/guides/audio)
