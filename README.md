@@ -31,6 +31,11 @@ cp .env.example .env
 
 Set `CODEXGW_ALLOWED_REPOS_JSON` to the repos this gateway may operate on, and set a long random `TOKEN_PEPPER`. `BOOTSTRAP_ADMIN_TOKEN` is only for local bootstrap and is refused in production.
 By default the gateway starts `codex app-server` using `CODEX_APP_SERVER_COMMAND=codex`. Set `CODEX_APP_SERVER_MODEL` when the local Codex config points at a model that is not supported by the authenticated account or installed CLI.
+
+Two operational notes for `CODEX_APP_SERVER_COMMAND`, both observed in real use:
+
+- Prefer an absolute binary path (e.g. `/Users/you/.local/bin/codex`). Node version managers such as volta prepend their own global bin directories to the child `PATH`, where a broken npm-installed `codex` wrapper can shadow the real CLI; the child then exits immediately and its stderr is not currently surfaced in gateway logs.
+- Each task spawns a fresh app-server that loads the full `~/.codex` config, including MCP servers -- each unreachable MCP server adds a ~30s startup timeout to every task. For machine-client workloads that need no MCP (for example structured-output review tasks), point `CODEX_APP_SERVER_COMMAND` at a small wrapper that appends `-c 'mcp_servers={}'`.
 Set `CODEXGW_MAX_PARALLEL_READ_TASKS` to bound concurrent read-only Codex runs; the default is `4`.
 Set `CODEXGW_WORKSPACES_JSON` when you want stable workspace IDs with mode/provider ceilings. If omitted, the gateway derives one workspace per allowed repo.
 
