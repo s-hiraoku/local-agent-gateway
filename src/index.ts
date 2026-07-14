@@ -22,7 +22,13 @@ const runner = new CodexAppServerRunner({
   maxResultBytes: config.maxResultBytes
 });
 const processor = new JobProcessor(store, runner, config.repositories, config.maxConcurrentJobs);
-const app = await buildApp({ config, store, processor, closeDatabase: database.close });
+const app = await buildApp({
+  config,
+  store,
+  processor,
+  closeDatabase: database.close,
+  readinessProbe: () => runner.checkReady()
+});
 
 let closing = false;
 async function shutdown(signal: NodeJS.Signals): Promise<void> {

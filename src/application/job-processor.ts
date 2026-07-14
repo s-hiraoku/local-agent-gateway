@@ -3,6 +3,7 @@ import type { RepositoryTarget } from "../infrastructure/config.js";
 import type { JobRow } from "../infrastructure/database.js";
 import type { CodingRunner } from "../adapters/codex/runner.js";
 import { GatewayStore } from "./store.js";
+import { parseStructuredOutput } from "../domain/structured-output.js";
 
 export class JobProcessor {
   private readonly active = new Map<string, AbortController>();
@@ -92,10 +93,12 @@ export class JobProcessor {
       return;
     }
     try {
+      const outputSchema = this.store.decryptOutputSchema(job);
       const result = await this.runner.run({
         repositoryPath: repository.path,
         backendThreadId: await this.store.backendThreadId(job.conversationId),
         prompt: this.store.decryptPrompt(job),
+        ...(outputSchema ? { outputSchema } : {}),
         signal: controller.signal,
         onEvent: async (event) => this.store.appendEvent(job.id, event.type, event.data)
       });
@@ -103,6 +106,7 @@ export class JobProcessor {
         await this.store.markCancelled(job.id);
         return;
       }
+      if (outputSchema) parseStructuredOutput(result.result, outputSchema);
       await this.store.updateBackendThread(job.conversationId, result.backendThreadId);
       await this.store.completeJob(job.id, result.result);
     } catch (error) {

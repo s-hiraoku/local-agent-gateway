@@ -13,6 +13,9 @@ Native dependency build scripts are denied by pnpm except for the version-locked
 ## Execution guarantees
 
 - API submission is idempotent when clients preserve `Idempotency-Key`.
+- Stateless run conversation creation and submission are one transaction.
+- Structured results are exact-JSON parsed and locally schema-validated before completion.
+- `/readyz` probes App Server and requires a dedicated ChatGPT login.
 - Coding execution is at-least-once across Gateway crashes.
 - Only read-only coding is enabled.
 - One App Server process is created per job.
@@ -39,7 +42,7 @@ CI repeats clean installation, lint, typecheck, tests, build, and harness verifi
 
 ## Release gates before real external use
 
-- Run an actual ChatGPT-authenticated Codex App Server turn with the dedicated `CODEX_HOME`.
+- Run an actual ChatGPT-authenticated structured Codex App Server turn with the dedicated `CODEX_HOME` in the deployment environment.
 - Verify authentication persistence, expiry, logout behavior, and error normalization.
 - Prove that personal MCP configuration is not loaded.
 - Add and test an OS-level readable-root boundary that hides HOME, SSH, cloud credentials, other repositories, and Gateway secrets.

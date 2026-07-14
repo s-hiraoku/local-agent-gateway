@@ -21,6 +21,7 @@ GET  /v2/capabilities
 GET  /v2/repositories
 POST /v2/conversations
 POST /v2/conversations/:id/turns
+POST /v2/coding/runs
 GET  /v2/jobs/:id
 GET  /v2/jobs/:id/events
 POST /v2/jobs/:id/cancel

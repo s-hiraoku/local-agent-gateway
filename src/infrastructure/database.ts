@@ -20,6 +20,7 @@ export type JobRow = {
   kind: "coding.turn";
   status: "queued" | "running" | "completed" | "failed" | "cancelled";
   encryptedPrompt: string;
+  encryptedOutputSchema: string | null;
   encryptedResult: string | null;
   errorCode: string | null;
   errorMessage: string | null;
@@ -81,7 +82,7 @@ export function openDatabase(path: string): DatabaseHandle {
   sqlite.pragma("foreign_keys = ON");
   sqlite.pragma("busy_timeout = 5000");
   const schemaVersion = sqlite.pragma("user_version", { simple: true }) as number;
-  if (schemaVersion > 1) {
+  if (schemaVersion > 2) {
     sqlite.close();
     throw new Error(`Gateway database schema ${schemaVersion} is newer than this binary supports`);
   }
@@ -113,6 +114,7 @@ export function openDatabase(path: string): DatabaseHandle {
       kind TEXT NOT NULL CHECK (kind = 'coding.turn'),
       status TEXT NOT NULL CHECK (status IN ('queued', 'running', 'completed', 'failed', 'cancelled')),
       encryptedPrompt TEXT NOT NULL,
+      encryptedOutputSchema TEXT,
       encryptedResult TEXT,
       errorCode TEXT,
       errorMessage TEXT,
@@ -156,8 +158,14 @@ export function openDatabase(path: string): DatabaseHandle {
       UNIQUE(jobId, attempt)
     );
 
-    PRAGMA user_version = 1;
+    PRAGMA user_version = 2;
   `);
+  }
+  if (schemaVersion === 1) {
+    sqlite.exec(`
+      ALTER TABLE jobs ADD COLUMN encryptedOutputSchema TEXT;
+      PRAGMA user_version = 2;
+    `);
   }
   const db = new Kysely<GatewayDatabase>({ dialect: new SqliteDialect({ database: sqlite }) });
   return {

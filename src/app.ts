@@ -11,6 +11,7 @@ import type { GatewayConfig } from "./infrastructure/config.js";
 import { secureTokenEqual, SecretBox } from "./infrastructure/crypto.js";
 import { GatewayStore } from "./application/store.js";
 import { JobProcessor, requireRepository } from "./application/job-processor.js";
+import { canonicalJson, validateOutputSchema, type OutputSchema } from "./domain/structured-output.js";
 
 declare module "fastify" {
   interface FastifyRequest {
@@ -24,6 +25,7 @@ export type AppDependencies = {
   processor: JobProcessor;
   closeDatabase: () => Promise<void>;
   startProcessor?: boolean;
+  readinessProbe?: () => Promise<void>;
 };
 
 const ErrorSchema = Type.Object({
@@ -44,7 +46,7 @@ export async function buildApp(dependencies: AppDependencies): Promise<FastifyIn
         censor: "[REDACTED]"
       }
     },
-    bodyLimit: config.maxPromptBytes + 16 * 1024,
+    bodyLimit: config.maxPromptBytes + 48 * 1024,
     requestIdHeader: "x-request-id",
     logController: new LogController({ disableRequestLogging: true })
   });
@@ -111,14 +113,15 @@ export async function buildApp(dependencies: AppDependencies): Promise<FastifyIn
     try {
       await store.isReady();
       if (!processor.isReady()) throw new Error("Job processor is not ready");
+      await dependencies.readinessProbe?.();
       return { status: "ready" as const };
     } catch {
-      throw new GatewayError("INTERNAL_ERROR", "Gateway storage is not ready", 503, true);
+      throw new GatewayError("INTERNAL_ERROR", "Gateway dependencies are not ready", 503, true);
     }
   });
 
   app.get("/v2/capabilities", async () => ({
-    capabilities: [{ id: "coding.turn", enabled: true, modes: ["read-only"] }]
+    capabilities: [{ id: "coding.turn", enabled: true, modes: ["read-only"], structuredOutput: true }]
   }));
 
   app.get("/v2/repositories", async () => ({
@@ -147,7 +150,10 @@ export async function buildApp(dependencies: AppDependencies): Promise<FastifyIn
       headers: Type.Object({
         "idempotency-key": Type.String({ minLength: 8, maxLength: 128 })
       }, { additionalProperties: true }),
-      body: Type.Object({ prompt: Type.String({ minLength: 1, maxLength: config.maxPromptBytes }) }),
+      body: Type.Object({
+        prompt: Type.String({ minLength: 1, maxLength: config.maxPromptBytes }),
+        outputSchema: Type.Optional(Type.Record(Type.String(), Type.Unknown()))
+      }),
       response: {
         202: Type.Object({ jobId: Type.String(), status: Type.String(), replayed: Type.Boolean() }),
         401: ErrorSchema,
@@ -158,7 +164,7 @@ export async function buildApp(dependencies: AppDependencies): Promise<FastifyIn
     }
   }, async (request, reply) => {
     const { conversationId } = request.params as { conversationId: string };
-    const { prompt } = request.body as { prompt: string };
+    const { prompt, outputSchema: rawOutputSchema } = request.body as { prompt: string; outputSchema?: unknown };
     if (Buffer.byteLength(prompt) > config.maxPromptBytes) {
       throw new GatewayError("INVALID_REQUEST", "Prompt exceeds the configured byte limit", 400);
     }
@@ -169,18 +175,79 @@ export async function buildApp(dependencies: AppDependencies): Promise<FastifyIn
       throw new GatewayError("INVALID_REQUEST", "Idempotency-Key is required", 400);
     }
     const secretBox = new SecretBox(config.encryptionKey);
+    const outputSchema = rawOutputSchema === undefined ? undefined : validateOutputSchema(rawOutputSchema);
     const submitted = await store.submitTurn({
       ownerId: request.principalId,
       conversationId,
       repositoryId: conversation.repositoryId,
       prompt,
+      ...(outputSchema ? { outputSchema } : {}),
       idempotencyKey,
-      requestHash: secretBox.digest(JSON.stringify({ conversationId, prompt })),
+      requestHash: secretBox.digest(canonicalJson({ version: 2, conversationId, prompt, outputSchema: outputSchema ?? null })),
       maxQueuedJobs: config.maxQueuedJobs
     });
     processor.wake();
     return reply.status(202).send({
       jobId: submitted.job.id,
+      status: submitted.job.status,
+      replayed: submitted.replayed
+    });
+  });
+
+  app.post("/v2/coding/runs", {
+    schema: {
+      headers: Type.Object({
+        "idempotency-key": Type.String({ minLength: 8, maxLength: 128 })
+      }, { additionalProperties: true }),
+      body: Type.Object({
+        repositoryId: Type.String({ minLength: 1, maxLength: 64 }),
+        prompt: Type.String({ minLength: 1, maxLength: config.maxPromptBytes }),
+        outputSchema: Type.Optional(Type.Record(Type.String(), Type.Unknown()))
+      }),
+      response: {
+        202: Type.Object({
+          jobId: Type.String(),
+          conversationId: Type.String(),
+          status: Type.String(),
+          replayed: Type.Boolean()
+        }),
+        401: ErrorSchema,
+        404: ErrorSchema,
+        409: ErrorSchema,
+        429: ErrorSchema
+      }
+    }
+  }, async (request, reply) => {
+    const body = request.body as { repositoryId: string; prompt: string; outputSchema?: OutputSchema };
+    requireRepository(config.repositories, body.repositoryId);
+    if (Buffer.byteLength(body.prompt) > config.maxPromptBytes) {
+      throw new GatewayError("INVALID_REQUEST", "Prompt exceeds the configured byte limit", 400);
+    }
+    const idempotencyKey = request.headers["idempotency-key"];
+    if (typeof idempotencyKey !== "string") {
+      throw new GatewayError("INVALID_REQUEST", "Idempotency-Key is required", 400);
+    }
+    const outputSchema = body.outputSchema === undefined ? undefined : validateOutputSchema(body.outputSchema);
+    const secretBox = new SecretBox(config.encryptionKey);
+    const submitted = await store.submitRun({
+      ownerId: request.principalId,
+      repositoryId: body.repositoryId,
+      prompt: body.prompt,
+      ...(outputSchema ? { outputSchema } : {}),
+      idempotencyKey,
+      requestHash: secretBox.digest(canonicalJson({
+        version: 2,
+        capability: "coding.run",
+        repositoryId: body.repositoryId,
+        prompt: body.prompt,
+        outputSchema: outputSchema ?? null
+      })),
+      maxQueuedJobs: config.maxQueuedJobs
+    });
+    processor.wake();
+    return reply.status(202).send({
+      jobId: submitted.job.id,
+      conversationId: submitted.job.conversationId,
       status: submitted.job.status,
       replayed: submitted.replayed
     });

@@ -4,6 +4,7 @@ import type { JobStatus, PublicEvent, PublicJob } from "../domain/jobs.js";
 import { newId } from "../domain/ids.js";
 import type { GatewayDatabase, JobRow } from "../infrastructure/database.js";
 import { SecretBox } from "../infrastructure/crypto.js";
+import type { OutputSchema } from "../domain/structured-output.js";
 
 type DatabaseExecutor = Kysely<GatewayDatabase> | Transaction<GatewayDatabase>;
 
@@ -12,10 +13,13 @@ export type SubmitTurnInput = {
   conversationId: string;
   repositoryId: string;
   prompt: string;
+  outputSchema?: OutputSchema;
   idempotencyKey: string;
   requestHash: string;
   maxQueuedJobs: number;
 };
+
+export type SubmitRunInput = Omit<SubmitTurnInput, "conversationId">;
 
 type StoreLimits = {
   maxEventBytes: number;
@@ -106,24 +110,7 @@ export class GatewayStore {
 
       const id = newId("job");
       const now = new Date().toISOString();
-      const row: JobRow = {
-        id,
-        ownerId: input.ownerId,
-        conversationId: input.conversationId,
-        repositoryId: input.repositoryId,
-        kind: "coding.turn",
-        status: "queued",
-        encryptedPrompt: this.secrets.encrypt(input.prompt, `job:${id}:prompt`),
-        encryptedResult: null,
-        errorCode: null,
-        errorMessage: null,
-        errorRetryable: 0,
-        cancelRequested: 0,
-        attempts: 0,
-        createdAt: now,
-        startedAt: null,
-        completedAt: null
-      };
+      const row = this.newJob(input, input.conversationId, id, now);
       await trx.insertInto("jobs").values(row).execute();
       await trx.insertInto("idempotencyRecords").values({
         ownerId: input.ownerId,
@@ -133,6 +120,43 @@ export class GatewayStore {
         createdAt: now
       }).execute();
       await this.appendEventWith(trx, id, "job.queued", { status: "queued" });
+      return { job: this.toPublicJob(row), replayed: false };
+    });
+  }
+
+  async submitRun(input: SubmitRunInput): Promise<{ job: PublicJob; replayed: boolean }> {
+    return this.db.transaction().execute(async (trx) => {
+      const existing = await trx.selectFrom("idempotencyRecords").selectAll()
+        .where("ownerId", "=", input.ownerId).where("key", "=", input.idempotencyKey).executeTakeFirst();
+      if (existing) {
+        if (existing.requestHash !== input.requestHash) {
+          throw new GatewayError("IDEMPOTENCY_CONFLICT", "Idempotency-Key was already used with a different request", 409);
+        }
+        return { job: this.toPublicJob(await this.requireOwnedJob(input.ownerId, existing.jobId, trx)), replayed: true };
+      }
+
+      await this.requireQueueCapacity(trx, input.maxQueuedJobs);
+      const conversationId = newId("cnv");
+      const jobId = newId("job");
+      const now = new Date().toISOString();
+      await trx.insertInto("conversations").values({
+        id: conversationId,
+        ownerId: input.ownerId,
+        repositoryId: input.repositoryId,
+        backendThreadId: null,
+        createdAt: now,
+        updatedAt: now
+      }).execute();
+      const row = this.newJob(input, conversationId, jobId, now);
+      await trx.insertInto("jobs").values(row).execute();
+      await trx.insertInto("idempotencyRecords").values({
+        ownerId: input.ownerId,
+        key: input.idempotencyKey,
+        requestHash: input.requestHash,
+        jobId,
+        createdAt: now
+      }).execute();
+      await this.appendEventWith(trx, jobId, "job.queued", { status: "queued" });
       return { job: this.toPublicJob(row), replayed: false };
     });
   }
@@ -171,6 +195,11 @@ export class GatewayStore {
 
   decryptPrompt(job: JobRow): string {
     return this.secrets.decrypt(job.encryptedPrompt, `job:${job.id}:prompt`);
+  }
+
+  decryptOutputSchema(job: JobRow): OutputSchema | undefined {
+    if (!job.encryptedOutputSchema) return undefined;
+    return JSON.parse(this.secrets.decrypt(job.encryptedOutputSchema, `job:${job.id}:output-schema`)) as OutputSchema;
   }
 
   async updateBackendThread(conversationId: string, backendThreadId: string): Promise<void> {
@@ -285,7 +314,53 @@ export class GatewayStore {
     return row;
   }
 
+  private async requireQueueCapacity(executor: DatabaseExecutor, maxQueuedJobs: number): Promise<void> {
+    const queueCount = await executor.selectFrom("jobs").select((expression) => expression.fn.countAll<number>().as("count"))
+      .where("status", "in", ["queued", "running"]).executeTakeFirstOrThrow();
+    if (Number(queueCount.count) >= maxQueuedJobs) {
+      throw new GatewayError("QUEUE_FULL", "The coding queue is full", 429, true);
+    }
+  }
+
+  private newJob(
+    input: Pick<SubmitTurnInput, "ownerId" | "repositoryId" | "prompt" | "outputSchema">,
+    conversationId: string,
+    id: string,
+    now: string
+  ): JobRow {
+    return {
+      id,
+      ownerId: input.ownerId,
+      conversationId,
+      repositoryId: input.repositoryId,
+      kind: "coding.turn",
+      status: "queued",
+      encryptedPrompt: this.secrets.encrypt(input.prompt, `job:${id}:prompt`),
+      encryptedOutputSchema: input.outputSchema
+        ? this.secrets.encrypt(JSON.stringify(input.outputSchema), `job:${id}:output-schema`)
+        : null,
+      encryptedResult: null,
+      errorCode: null,
+      errorMessage: null,
+      errorRetryable: 0,
+      cancelRequested: 0,
+      attempts: 0,
+      createdAt: now,
+      startedAt: null,
+      completedAt: null
+    };
+  }
+
   private toPublicJob(row: JobRow): PublicJob {
+    const result = row.encryptedResult ? this.secrets.decrypt(row.encryptedResult, `job:${row.id}:result`) : null;
+    let structuredOutput: unknown | null = null;
+    if (result !== null && row.encryptedOutputSchema !== null) {
+      try {
+        structuredOutput = JSON.parse(result) as unknown;
+      } catch {
+        structuredOutput = null;
+      }
+    }
     return {
       id: row.id,
       conversationId: row.conversationId,
@@ -295,7 +370,8 @@ export class GatewayStore {
       createdAt: row.createdAt,
       startedAt: row.startedAt,
       completedAt: row.completedAt,
-      result: row.encryptedResult ? this.secrets.decrypt(row.encryptedResult, `job:${row.id}:result`) : null,
+      result,
+      structuredOutput,
       error: row.errorCode && row.errorMessage ? {
         code: row.errorCode,
         message: row.errorMessage,

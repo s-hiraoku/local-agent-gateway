@@ -1,6 +1,7 @@
 import { homedir } from "node:os";
 import { GatewayError } from "../../domain/errors.js";
 import { BufferedJsonRpcTransport, CodexRpcError } from "./json-rpc.js";
+import type { OutputSchema } from "../../domain/structured-output.js";
 
 export type CodingEvent = { type: "agent.message.delta"; data: { delta: string } };
 
@@ -8,6 +9,7 @@ export type CodingRunInput = {
   repositoryPath: string;
   backendThreadId: string | null;
   prompt: string;
+  outputSchema?: OutputSchema;
   signal: AbortSignal;
   onEvent: (event: CodingEvent) => Promise<void>;
 };
@@ -44,21 +46,42 @@ export function buildCodexEnvironment(source: NodeJS.ProcessEnv, codexHome: stri
 }
 
 export class CodexAppServerRunner implements CodingRunner {
+  private readiness: { checkedAt: number; error?: GatewayError } | undefined;
+
   constructor(private readonly config: CodexRunnerConfig) {}
 
-  async run(input: CodingRunInput): Promise<CodingRunResult> {
-    const transport = new BufferedJsonRpcTransport({
-      command: this.config.command,
-      args: ["app-server"],
-      env: buildCodexEnvironment(process.env, this.config.codexHome),
-      requestTimeoutMs: this.config.rpcTimeoutMs
-    });
+  async checkReady(): Promise<void> {
+    if (this.readiness && Date.now() - this.readiness.checkedAt < 10_000) {
+      if (this.readiness.error) throw this.readiness.error;
+      return;
+    }
+    const transport = this.createTransport();
     try {
-      await transport.request("initialize", {
-        clientInfo: { name: "local-agent-gateway", title: "Local Agent Gateway", version: "2.0.0" },
-        capabilities: { experimentalApi: false }
-      });
-      transport.notify("initialized");
+      await this.initialize(transport);
+      const response = await transport.request<{ account?: unknown }>("account/read", { refreshToken: false });
+      const account = asRecord(response.account);
+      if (account.type !== "chatgpt") {
+        throw new GatewayError(
+          "CODEX_UNAUTHORIZED",
+          "The dedicated Codex home is not signed in with a ChatGPT account",
+          503,
+          false
+        );
+      }
+      this.readiness = { checkedAt: Date.now() };
+    } catch (error) {
+      const normalized = mapCodexError(error);
+      this.readiness = { checkedAt: Date.now(), error: normalized };
+      throw normalized;
+    } finally {
+      transport.close();
+    }
+  }
+
+  async run(input: CodingRunInput): Promise<CodingRunResult> {
+    const transport = this.createTransport();
+    try {
+      await this.initialize(transport);
 
       const common = {
         cwd: input.repositoryPath,
@@ -77,7 +100,8 @@ export class CodexAppServerRunner implements CodingRunner {
       const started = await transport.request<TurnResponse>("turn/start", {
         threadId,
         input: [{ type: "text", text: input.prompt }],
-        approvalPolicy: "never"
+        approvalPolicy: "never",
+        ...(input.outputSchema ? { outputSchema: input.outputSchema } : {})
       });
       const turnId = started.turn.id;
       const interrupt = () => {
@@ -91,10 +115,31 @@ export class CodexAppServerRunner implements CodingRunner {
         input.signal.removeEventListener("abort", interrupt);
       }
     } catch (error) {
-      throw mapCodexError(error);
+      const normalized = mapCodexError(error);
+      this.readiness = normalized.code === "CODEX_UNAUTHORIZED"
+        ? { checkedAt: Date.now(), error: normalized }
+        : undefined;
+      throw normalized;
     } finally {
       transport.close();
     }
+  }
+
+  private createTransport(): BufferedJsonRpcTransport {
+    return new BufferedJsonRpcTransport({
+      command: this.config.command,
+      args: ["app-server"],
+      env: buildCodexEnvironment(process.env, this.config.codexHome),
+      requestTimeoutMs: this.config.rpcTimeoutMs
+    });
+  }
+
+  private async initialize(transport: BufferedJsonRpcTransport): Promise<void> {
+    await transport.request("initialize", {
+      clientInfo: { name: "local-agent-gateway", title: "Local Agent Gateway", version: "2.0.0" },
+      capabilities: { experimentalApi: false }
+    });
+    transport.notify("initialized");
   }
 
   private async collectTurn(

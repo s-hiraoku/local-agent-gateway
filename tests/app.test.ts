@@ -53,6 +53,13 @@ async function waitForCompletion(app: FastifyInstance, jobId: string) {
 }
 
 describe("V2 API", () => {
+  const reviewSchema = {
+    type: "object",
+    properties: { verdict: { type: "string", enum: ["accept", "revise", "reject"] } },
+    required: ["verdict"],
+    additionalProperties: false
+  };
+
   it("requires authentication and never returns repository paths", async () => {
     const { app } = await testApp();
     expect((await app.inject({ method: "GET", url: "/healthz" })).statusCode).toBe(200);
@@ -156,5 +163,75 @@ describe("V2 API", () => {
     });
     expect(second.statusCode).toBe(429);
     release?.();
+  });
+
+  it("atomically runs a one-shot structured coding job", async () => {
+    let receivedSchema: unknown;
+    const runner: CodingRunner = {
+      async run(input) {
+        receivedSchema = input.outputSchema;
+        return { backendThreadId: "thread", result: JSON.stringify({ verdict: "accept" }) };
+      }
+    };
+    const { app, database } = await testApp(runner);
+    const request = {
+      method: "POST" as const,
+      url: "/v2/coding/runs",
+      headers: { ...authorization, "idempotency-key": "decision-review-0001" },
+      payload: { repositoryId: "gateway", prompt: "review this", outputSchema: reviewSchema }
+    };
+    const created = await app.inject(request);
+    expect(created.statusCode).toBe(202);
+    expect(created.json()).toMatchObject({ status: "queued", replayed: false });
+
+    const replay = await app.inject({
+      ...request,
+      payload: {
+        repositoryId: "gateway",
+        prompt: "review this",
+        outputSchema: { required: ["verdict"], properties: reviewSchema.properties, type: "object", additionalProperties: false }
+      }
+    });
+    expect(replay.statusCode).toBe(202);
+    expect(replay.json()).toMatchObject({ jobId: created.json().jobId, replayed: true });
+
+    const job = await waitForCompletion(app, created.json().jobId as string);
+    expect(job).toMatchObject({
+      status: "completed",
+      structuredOutput: { verdict: "accept" }
+    });
+    expect(receivedSchema).toEqual(reviewSchema);
+    const stored = await database.db.selectFrom("jobs").select("encryptedOutputSchema").executeTakeFirstOrThrow();
+    expect(stored.encryptedOutputSchema).not.toContain("verdict");
+  });
+
+  it("rejects unsafe schemas and fails invalid structured output", async () => {
+    const runner: CodingRunner = {
+      async run() {
+        return { backendThreadId: "thread", result: "not json" };
+      }
+    };
+    const { app } = await testApp(runner);
+    const unsafe = await app.inject({
+      method: "POST",
+      url: "/v2/coding/runs",
+      headers: { ...authorization, "idempotency-key": "decision-review-0002" },
+      payload: { repositoryId: "gateway", prompt: "review", outputSchema: { $ref: "https://example.test/schema" } }
+    });
+    expect(unsafe.statusCode).toBe(400);
+    expect(unsafe.json().error.code).toBe("INVALID_REQUEST");
+
+    const created = await app.inject({
+      method: "POST",
+      url: "/v2/coding/runs",
+      headers: { ...authorization, "idempotency-key": "decision-review-0003" },
+      payload: { repositoryId: "gateway", prompt: "review", outputSchema: reviewSchema }
+    });
+    const job = await waitForCompletion(app, created.json().jobId as string);
+    expect(job).toMatchObject({
+      status: "failed",
+      structuredOutput: null,
+      error: { code: "STRUCTURED_OUTPUT_INVALID", retryable: false }
+    });
   });
 });

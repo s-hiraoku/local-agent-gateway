@@ -243,3 +243,10 @@ Use this file to record meaningful verification runs.
 - Scope: Workspace target registry and provider adapter contract
 - Result: Passed
 - Notes: Added server-side workspace target selection, workspace scopes, workspace listing, task creation by `workspaceId`, provider adapter typing, docs, and regression coverage. Full suite reports 75 Vitest tests. Smoke passed with the existing Node `module.register()` deprecation warning.
+
+### 2026-07-14 11:03
+
+- Command: `pnpm lint`, `pnpm typecheck`, `pnpm test`, `pnpm build`, `pnpm smoke`, `scripts/verify.sh`; Decision-Agent `python -m unittest discover -s tests`, `uv run pyright`; cross-repository HTTP process E2E
+- Scope: Gateway V2 structured one-shot coding runs and Decision-Agent migration
+- Result: Passed except real subscription authentication
+- Notes: Gateway reports 26 Vitest tests. Decision-Agent reports 60 unittest cases and zero pyright errors. An actual Decision-Agent CLI request completed through the running Gateway, SQLite job worker, and a separate fake App Server stdio process. `codex-cli 0.144.0` is installed, but the dedicated `~/.codex-gateway` reports `Not logged in`, so a real ChatGPT subscription turn remains an operator verification step.

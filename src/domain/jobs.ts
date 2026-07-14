@@ -12,6 +12,7 @@ export type PublicJob = {
   startedAt: string | null;
   completedAt: string | null;
   result: string | null;
+  structuredOutput: unknown | null;
   error: { code: string; message: string; retryable: boolean } | null;
 };
 

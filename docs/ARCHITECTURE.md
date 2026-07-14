@@ -44,6 +44,8 @@ V2 currently supports `coding.turn` in read-only mode:
 
 Different conversations may run concurrently. Turns within one conversation are claimed strictly one at a time so its internal Codex thread cannot fork or be overwritten by racing jobs.
 
+`POST /v2/coding/runs` is the stateless facade over the same model. It creates a private conversation and its first job in one transaction, avoiding partial creation and cross-request idempotency for clients that need a single answer. Optional structured output is a capability contract, not raw App Server passthrough: the Gateway limits the schema, forwards it, and independently validates exact final JSON before completing the job.
+
 At-least-once recovery is intentional for read-only jobs: an interrupted attempt is marked failed and the job is requeued. This may consume subscription work twice. Write mode must use a different recovery contract.
 
 ## Public API principles
@@ -53,6 +55,7 @@ Expose capabilities, not upstream protocols:
 ```text
 POST /v2/conversations
 POST /v2/conversations/:id/turns
+POST /v2/coding/runs
 GET  /v2/jobs/:id
 GET  /v2/jobs/:id/events
 POST /v2/jobs/:id/cancel

@@ -12,6 +12,7 @@ export type GatewayErrorCode =
   | "CODEX_OVERLOADED"
   | "CODEX_TIMEOUT"
   | "CODEX_EXECUTION_FAILED"
+  | "STRUCTURED_OUTPUT_INVALID"
   | "INTERNAL_ERROR";
 
 export class GatewayError extends Error {

@@ -9,6 +9,8 @@ The public API never exposes a raw working directory, Codex thread ID, App Serve
 Implemented:
 
 - authenticated, read-only coding conversations;
+- atomic one-shot coding runs for stateless clients such as Decision-Agent;
+- JSON Schema-constrained output with strict local result validation;
 - durable SQLite jobs and attempt history;
 - encrypted prompt, result, and event payloads;
 - required `Idempotency-Key` submission;
@@ -38,6 +40,15 @@ V2 is a production-shaped foundation, not production-ready for untrusted users o
 - a dedicated `CODEX_HOME` authenticated with the intended ChatGPT/Codex account
 
 The dedicated home must not contain `config.toml`; Gateway startup rejects it to prevent accidental MCP or personal configuration inheritance.
+
+Authenticate that dedicated home before starting the service:
+
+```bash
+mkdir -p "$HOME/.codex-gateway"
+CODEX_HOME="$HOME/.codex-gateway" codex login
+```
+
+`GET /readyz` starts an App Server health probe and reports ready only when this home contains a ChatGPT account login. API-key-backed Codex sessions are intentionally rejected because coding is meant to use the ChatGPT/Codex subscription boundary.
 
 Install and verify:
 
@@ -95,6 +106,27 @@ pnpm dev
 curl -H "Authorization: Bearer $CODEXGW_API_TOKEN" \
   http://127.0.0.1:8787/v2/repositories
 ```
+
+For a stateless structured request, submit an atomic one-shot run. The Gateway creates its internal conversation and job in one transaction:
+
+```bash
+curl -X POST http://127.0.0.1:8787/v2/coding/runs \
+  -H "Authorization: Bearer $CODEXGW_API_TOKEN" \
+  -H "Idempotency-Key: decision-review-019f" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "repositoryId":"reviews",
+    "prompt":"Return a review verdict.",
+    "outputSchema":{
+      "type":"object",
+      "properties":{"verdict":{"type":"string","enum":["accept","revise","reject"]}},
+      "required":["verdict"],
+      "additionalProperties":false
+    }
+  }'
+```
+
+On completion, `GET /v2/jobs/:id` contains both the exact JSON text in `result` and the validated value in `structuredOutput`. Invalid JSON or schema mismatch fails with `STRUCTURED_OUTPUT_INVALID`; the Gateway does not repair or extract JSON from Markdown.
 
 Create a conversation:
 

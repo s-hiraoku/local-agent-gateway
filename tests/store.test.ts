@@ -1,13 +1,18 @@
 import { afterEach, describe, expect, it } from "vitest";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import type { DatabaseHandle } from "../src/infrastructure/database.js";
 import { openDatabase } from "../src/infrastructure/database.js";
 import { SecretBox } from "../src/infrastructure/crypto.js";
 import { GatewayStore } from "../src/application/store.js";
 
 const databases: DatabaseHandle[] = [];
+const temporaryDirectories: string[] = [];
 
 afterEach(async () => {
   await Promise.all(databases.splice(0).map((database) => database.close()));
+  for (const directory of temporaryDirectories.splice(0)) rmSync(directory, { recursive: true, force: true });
 });
 
 function createStore(limits = { maxEventBytes: 1024, maxEventsPerJob: 100, maxResultBytes: 1024 }) {
@@ -33,6 +38,30 @@ async function queuedJob(store: GatewayStore) {
 }
 
 describe("GatewayStore", () => {
+  it("claims a committed queued run after the database is reopened", async () => {
+    const directory = mkdtempSync(join(tmpdir(), "codexgw-restart-"));
+    temporaryDirectories.push(directory);
+    const path = join(directory, "gateway.sqlite");
+    const key = Buffer.alloc(32, 8);
+    const firstDatabase = openDatabase(path);
+    const firstStore = new GatewayStore(firstDatabase.db, new SecretBox(key));
+    const submitted = await firstStore.submitRun({
+      ownerId: "owner",
+      repositoryId: "gateway",
+      prompt: "durable",
+      idempotencyKey: "durable-run-1",
+      requestHash: "hash",
+      maxQueuedJobs: 10
+    });
+    await firstDatabase.close();
+
+    const reopened = openDatabase(path);
+    databases.push(reopened);
+    const reopenedStore = new GatewayStore(reopened.db, new SecretBox(key));
+    await reopenedStore.recoverInterruptedJobs();
+    expect((await reopenedStore.claimNextJob())?.id).toBe(submitted.job.id);
+  });
+
   it("records every crash recovery as a distinct at-least-once attempt", async () => {
     const { store, database } = createStore();
     const submitted = await queuedJob(store);
