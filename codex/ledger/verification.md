@@ -250,3 +250,17 @@ Use this file to record meaningful verification runs.
 - Scope: Gateway V2 structured one-shot coding runs and Decision-Agent migration
 - Result: Passed except real subscription authentication
 - Notes: Gateway reports 26 Vitest tests. Decision-Agent reports 60 unittest cases and zero pyright errors. An actual Decision-Agent CLI request completed through the running Gateway, SQLite job worker, and a separate fake App Server stdio process. `codex-cli 0.144.0` is installed, but the dedicated `~/.codex-gateway` reports `Not logged in`, so a real ChatGPT subscription turn remains an operator verification step.
+
+### 2026-07-15
+
+- Command: live Decision-Agent CLI review through a temporary Gateway V2 process and `codex-cli 0.144.0` App Server
+- Scope: Dedicated `CODEX_HOME` ChatGPT authentication, readiness, and subscription-backed structured output
+- Result: Passed
+- Notes: `CODEX_HOME=~/.codex-gateway` reported `Logged in using ChatGPT`; `/readyz` passed its real `account/read` probe. Decision-Agent completed a live structured review through the Gateway and returned a schema-valid `revise` verdict with confidence `0.99`. Gateway bearer and encryption secrets existed only in the temporary process environment, and the temporary database was removed after the run.
+
+### 2026-07-15 (release continuation)
+
+- Command: live structured coding run, terminal SSE fetch, Gateway restart with the same SQLite database, idempotent replay; `scripts/verify.sh`; `pnpm smoke`; Decision-Agent unittest and pyright
+- Scope: Local single-owner MVP release readiness
+- Result: Passed for trusted local operation
+- Notes: A second real subscription-backed job completed with `{ "ok": true }`. Unauthenticated repository access returned 401, terminal SSE included `job.completed` without exposing the configured absolute repository path, and the encrypted completed result remained readable after a full Gateway restart. Reusing the same request and idempotency key returned the original job with `replayed: true`. Gateway reports 26 passing Vitest tests plus successful lint, typecheck, build, policy, and smoke checks. Decision-Agent reports 60 passing tests and zero pyright errors. The dedicated Codex directory is mode 0700 and `auth.json` is mode 0600; no database, auth file, or `.env` was left in either repository.
