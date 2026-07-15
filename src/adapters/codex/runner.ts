@@ -209,9 +209,23 @@ export function sanitizeOutput(value: string, repositoryPath: string): string {
   return value
     .replaceAll(repositoryPath, "[repository]")
     .replaceAll(homedir(), "[home]")
+    .replace(/file:\/\/\/[^\s"'`)}\],;]*/gi, "[local-path]")
     .replace(/\\\\[^\s"'`)}\],;]+/g, "[local-path]")
     .replace(/[A-Za-z]:\\[^\s"'`)}\],;]*/g, "[local-path]")
-    .replace(/\/[^\s"'`)}\],;]*/g, "[local-path]");
+    .replace(/(?<![:/])\/[^\s"'`)}\],;]*/g, (candidate) =>
+      isLikelyLocalPosixPath(candidate) ? "[local-path]" : candidate
+    );
+}
+
+const LOCAL_POSIX_ROOTS = new Set([
+  "Applications", "Library", "System", "Users", "Volumes", "app", "bin", "data", "dev", "etc",
+  "home", "mnt", "nix", "opt", "private", "proc", "root", "run", "sbin", "srv", "sys", "tmp",
+  "usr", "var", "workspace", "workspaces"
+]);
+
+function isLikelyLocalPosixPath(candidate: string): boolean {
+  const root = candidate.slice(1).split("/", 1)[0];
+  return root !== undefined && LOCAL_POSIX_ROOTS.has(root);
 }
 
 function appendBounded(current: string, delta: string, maxBytes: number): string {

@@ -62,6 +62,12 @@ describe("CodexAppServerRunner process contract", () => {
     expect(mapCodexInfo({ httpConnectionFailed: { httpStatusCode: 503 } })).toBe("CODEX_EXECUTION_FAILED");
   });
 
+  it("preserves API routes and URLs while redacting local POSIX paths", () => {
+    const value = '{"endpoint":"/v2/jobs","docs":"https://example.com/api","file":"/etc/passwd","uri":"file:///tmp/key"}';
+    expect(sanitizeOutput(value, "/workspace/repo"))
+      .toBe('{"endpoint":"/v2/jobs","docs":"https://example.com/api","file":"[local-path]","uri":"[local-path]"}');
+  });
+
   it("bounds the final item/completed message and keeps unauthorized non-retryable", async () => {
     const bounded = new CodexAppServerRunner({
       command: fixture,
