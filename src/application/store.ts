@@ -47,24 +47,20 @@ export class GatewayStore {
 
   async recoverInterruptedJobs(): Promise<number> {
     const now = new Date().toISOString();
-    await this.db.updateTable("jobAttempts").set({
-      status: "failed",
-      errorCode: "GATEWAY_RESTARTED",
-      completedAt: now
-    }).where("status", "=", "running").execute();
-    const result = await this.db
-      .updateTable("jobs")
-      .set({ status: "queued", startedAt: null })
-      .where("status", "=", "running")
-      .where("cancelRequested", "=", 0)
-      .executeTakeFirst();
-    await this.db
-      .updateTable("jobs")
-      .set({ status: "cancelled", completedAt: new Date().toISOString() })
-      .where("status", "=", "running")
-      .where("cancelRequested", "=", 1)
-      .execute();
-    return Number(result.numUpdatedRows);
+    return this.db.transaction().execute(async (trx) => {
+      const cancellations = await trx.selectFrom("jobs").select("id")
+        .where("status", "=", "running").where("cancelRequested", "=", 1).execute();
+      for (const job of cancellations) await this.finalizeCancellation(trx, job.id, now);
+
+      await trx.updateTable("jobAttempts").set({
+        status: "failed",
+        errorCode: "GATEWAY_RESTARTED",
+        completedAt: now
+      }).where("status", "=", "running").execute();
+      const result = await trx.updateTable("jobs").set({ status: "queued", startedAt: null })
+        .where("status", "=", "running").where("cancelRequested", "=", 0).executeTakeFirst();
+      return Number(result.numUpdatedRows);
+    });
   }
 
   async createConversation(ownerId: string, repositoryId: string): Promise<{ id: string; repositoryId: string; createdAt: string }> {

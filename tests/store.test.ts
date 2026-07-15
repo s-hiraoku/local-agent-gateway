@@ -80,6 +80,22 @@ describe("GatewayStore", () => {
     expect((await store.getJob("owner", submitted.job.id)).status).toBe("running");
   });
 
+  it("emits a terminal cancellation event when recovery finishes a cancelled run", async () => {
+    const { store, database } = createStore();
+    const submitted = await queuedJob(store);
+    await store.claimNextJob();
+    expect(await store.requestCancellation("owner", submitted.job.id)).toBe("running");
+
+    expect(await store.recoverInterruptedJobs()).toBe(0);
+
+    expect((await store.getJob("owner", submitted.job.id)).status).toBe("cancelled");
+    expect((await store.events("owner", submitted.job.id)).map((event) => event.type)).toEqual([
+      "job.queued", "job.started", "job.cancelled"
+    ]);
+    const attempt = await database.db.selectFrom("jobAttempts").selectAll().executeTakeFirstOrThrow();
+    expect(attempt.status).toBe("cancelled");
+  });
+
   it("enforces event and result resource limits", async () => {
     const { store } = createStore({ maxEventBytes: 32, maxEventsPerJob: 100, maxResultBytes: 3 });
     const submitted = await queuedJob(store);
