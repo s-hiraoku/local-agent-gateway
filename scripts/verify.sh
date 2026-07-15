@@ -99,6 +99,11 @@ main() {
 
   run_policy_docs_check
 
+  if [[ -x /bin/zsh ]]; then
+    echo "Checking local-production shell syntax"
+    /bin/zsh -n scripts/local-production/launcher.sh scripts/local-production/gatewayctl.sh
+  fi
+
   if [[ "${detected}" -eq 0 ]]; then
     mark_missing_check "No project-specific verification detected"
   fi

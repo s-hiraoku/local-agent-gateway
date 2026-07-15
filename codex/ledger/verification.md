@@ -278,3 +278,10 @@ Use this file to record meaningful verification runs.
 - Scope: GitHub Actions Node 24 runtime warnings on PR #18 and Decision-Agent PR #6
 - Result: Passed
 - Notes: Updated affected CI actions to current Node 24-compatible releases and pinned each action to an immutable commit. Refined output sanitization so API routes and HTTP URLs remain valid while local paths and file URLs stay redacted. Crash recovery now atomically emits the terminal cancellation event for interrupted cancelled jobs. Gateway reports 35 passing Vitest tests plus successful lint, typecheck, build, and policy checks. Decision-Agent reports 60 passing tests and zero pyright errors.
+
+### 2026-07-16 (local production)
+
+- Command: `scripts/verify.sh`; installed macOS LaunchAgent; `gatewayctl status`; authenticated and unauthenticated repository requests; forced process crash; `gatewayctl backup`; live Decision-Agent LLM review
+- Scope: Single-owner local-production deployment through a versioned release, login Keychain, and launchd
+- Result: Passed after installer portability fixes
+- Notes: Gateway reports 37 passing Vitest tests plus successful lint, typecheck, build, policy, and zsh syntax checks. The installed service uses a copied Node 26 arm64 runtime and matching arm64 better-sqlite3 addon, listens only on `127.0.0.1:8787`, returns 401 without the bearer token and 200 with it, recovered after SIGKILL, and produced a mode-0600 stopped-service SQLite backup. A live Decision-Agent request completed through the resident Gateway with `engine: llm:gateway:codex`. Initial installation attempts safely exposed and then fixed Codex status stderr handling, Volta shim resolution, native-addon architecture reuse, and asynchronous backup restart readiness.
