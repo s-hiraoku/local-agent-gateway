@@ -15,14 +15,14 @@ mark_missing_check() {
 run_if_script_exists() {
   local script_name="$1"
 
-  if ! command -v npm >/dev/null 2>&1; then
-    mark_missing_check "npm not found; skipping package.json script checks"
+  if ! command -v node >/dev/null 2>&1; then
+    mark_missing_check "node not found; skipping package.json script checks"
     return
   fi
 
-  if npm run | grep -E "^[[:space:]]+${script_name}$|^[[:space:]]+${script_name}:" >/dev/null 2>&1; then
-    echo "Running npm run ${script_name}"
-    npm run "${script_name}"
+  if node -e 'const scripts = require("./package.json").scripts ?? {}; process.exit(scripts[process.argv[1]] ? 0 : 1)' "${script_name}"; then
+    echo "Running node --run ${script_name}"
+    node --run "${script_name}"
   else
     echo "No npm script '${script_name}' detected"
   fi

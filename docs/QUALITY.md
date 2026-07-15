@@ -1,45 +1,54 @@
 # Quality and Operations
 
-This project is security-sensitive local infrastructure. Quality is defined by preserving the Gateway boundary while making local operation predictable.
+## Supported baseline
 
-## Source of Policy
+- Node.js 26 only; `.node-version` pins the preferred patch.
+- pnpm 11.13 with a frozen lockfile.
+- TypeScript 7 strict ESM.
+- Fastify 5, TypeBox/Ajv, Kysely, and better-sqlite3.
+- One Gateway process and one SQLite writer on a private single host.
 
-`policy_template.md` is the Codex-facing policy template for repository work. Use it as the short contract for task prompts, reviews, and future automation. The detailed user-facing behavior remains in this docs directory and `README.md`.
+Native dependency build scripts are denied by pnpm except for the version-locked `better-sqlite3` and `esbuild` packages. Newly published packages are subject to the repository supply-chain age policy; the two initial pinned exceptions are explicit in `pnpm-workspace.yaml`.
 
-## Operational Guarantees
+## Execution guarantees
 
-- Gateway startup fails any stale `queued` or `pending` tasks because prompts and active runner handles are not persisted.
-- `workspace-write` tasks are serialized per repo.
-- `read-only` tasks are limited by `CODEXGW_MAX_PARALLEL_READ_TASKS`.
-- Workspace target selection uses server-side public IDs and requires matching workspace and repo scopes.
-- Task provider selection uses registered public IDs. Non-default providers require explicit provider scopes.
-- Active task control is process-local; after restart, interrupt and steer fail closed.
-- Task events and diff artifacts are stored as Gateway artifacts, not Codex internal payloads.
+- API submission is idempotent when clients preserve `Idempotency-Key`.
+- Stateless run conversation creation and submission are one transaction.
+- Structured results are exact-JSON parsed and locally schema-validated before completion.
+- `/readyz` probes App Server and requires a dedicated ChatGPT login.
+- Coding execution is at-least-once across Gateway crashes.
+- Only read-only coding is enabled.
+- One App Server process is created per job.
+- Queue and concurrency are bounded.
+- RPC, turn, result, event, notification, and stderr paths are bounded or timed out.
+- Prompts, results, and event payloads are AES-256-GCM encrypted in SQLite with record/field context bound as authenticated data.
+- SQLite uses WAL, foreign keys, busy timeout, schema versioning, and mode `0600` for the main database file.
+- Active jobs receive cancellation on graceful shutdown; shutdown waits up to 30 seconds.
 
-## Verification Matrix
+Back up the encryption key separately from the database. There is no key rotation workflow yet. Losing the key loses stored payloads; exposing both key and database exposes them.
 
-| Change type | Required checks |
-| --- | --- |
-| Auth, token, scope, repo policy, or sandbox behavior | Targeted tests plus `npm test`, `npm run typecheck`, `npm run lint` |
-| Task lifecycle, queueing, events, control, or diff artifacts | Targeted task tests plus full `npm test` |
-| Config or startup behavior | Config tests, startup/task tests, docs update |
-| Public API shape or docs-visible behavior | Tests for compatibility or rejection, docs update |
-| Release readiness | `scripts/verify.sh` |
+## Verification
 
-## Review Checklist
+```bash
+pnpm lint
+pnpm typecheck
+pnpm test
+pnpm build
+pnpm smoke
+scripts/verify.sh
+```
 
-- Public responses do not expose raw paths, Codex IDs, tokens, full prompts, or raw App Server payloads.
-- New request fields are scoped, validated, documented, and reject unknown unsafe alternatives.
-- Workspace targets never accept raw client paths and must preserve repo/provider/mode ceilings.
-- New task providers declare capabilities before they can run tasks, and unsupported modes fail closed.
-- Any new execution capability has an explicit deny case.
-- Startup and restart behavior is documented.
-- Tests include both allowed and denied paths for security-sensitive behavior.
-- Docs describe operational limits rather than implying durable capabilities that do not exist.
+CI repeats clean installation, lint, typecheck, tests, build, and harness verification on Node.js 26.
 
-## Known Limits
+## Release gates before real external use
 
-- Queued task prompts are not persisted, so queued tasks cannot be resumed after restart.
-- Active Codex sessions are not durable across process restarts.
-- Diff artifacts are captured from git state at task completion. Tracked staged and unstaged changes are included; untracked files may appear in `changedFiles` without a patch.
-- This repository does not include a first-party CLI or dashboard client.
+- Run an actual ChatGPT-authenticated structured Codex App Server turn with the dedicated `CODEX_HOME` in the deployment environment.
+- Verify authentication persistence, expiry, logout behavior, and error normalization.
+- Prove that personal MCP configuration is not loaded.
+- Add and test an OS-level readable-root boundary that hides HOME, SSH, cloud credentials, other repositories, and Gateway secrets.
+- Test cancel/complete/shutdown races and App Server crash recovery.
+- Add Codex CLI compatibility checks based on generated version-specific App Server schemas.
+- Exercise SSE reconnect and slow-consumer behavior with a real network client.
+- Define encrypted-payload key rotation, retention cleanup, backup, and restore procedures.
+
+Until those gates pass, the service is suitable only for trusted clients, a dedicated local service identity, and trusted repositories.

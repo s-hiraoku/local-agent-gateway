@@ -243,3 +243,38 @@ Use this file to record meaningful verification runs.
 - Scope: Workspace target registry and provider adapter contract
 - Result: Passed
 - Notes: Added server-side workspace target selection, workspace scopes, workspace listing, task creation by `workspaceId`, provider adapter typing, docs, and regression coverage. Full suite reports 75 Vitest tests. Smoke passed with the existing Node `module.register()` deprecation warning.
+
+### 2026-07-14 11:03
+
+- Command: `pnpm lint`, `pnpm typecheck`, `pnpm test`, `pnpm build`, `pnpm smoke`, `scripts/verify.sh`; Decision-Agent `python -m unittest discover -s tests`, `uv run pyright`; cross-repository HTTP process E2E
+- Scope: Gateway V2 structured one-shot coding runs and Decision-Agent migration
+- Result: Passed except real subscription authentication
+- Notes: Gateway reports 26 Vitest tests. Decision-Agent reports 60 unittest cases and zero pyright errors. An actual Decision-Agent CLI request completed through the running Gateway, SQLite job worker, and a separate fake App Server stdio process. `codex-cli 0.144.0` is installed, but the dedicated `~/.codex-gateway` reports `Not logged in`, so a real ChatGPT subscription turn remains an operator verification step.
+
+### 2026-07-15
+
+- Command: live Decision-Agent CLI review through a temporary Gateway V2 process and `codex-cli 0.144.0` App Server
+- Scope: Dedicated `CODEX_HOME` ChatGPT authentication, readiness, and subscription-backed structured output
+- Result: Passed
+- Notes: `CODEX_HOME=~/.codex-gateway` reported `Logged in using ChatGPT`; `/readyz` passed its real `account/read` probe. Decision-Agent completed a live structured review through the Gateway and returned a schema-valid `revise` verdict with confidence `0.99`. Gateway bearer and encryption secrets existed only in the temporary process environment, and the temporary database was removed after the run.
+
+### 2026-07-15 (release continuation)
+
+- Command: live structured coding run, terminal SSE fetch, Gateway restart with the same SQLite database, idempotent replay; `scripts/verify.sh`; `pnpm smoke`; Decision-Agent unittest and pyright
+- Scope: Local single-owner MVP release readiness
+- Result: Passed for trusted local operation
+- Notes: A second real subscription-backed job completed with `{ "ok": true }`. Unauthenticated repository access returned 401, terminal SSE included `job.completed` without exposing the configured absolute repository path, and the encrypted completed result remained readable after a full Gateway restart. Reusing the same request and idempotency key returned the original job with `replayed: true`. Gateway reports 26 passing Vitest tests plus successful lint, typecheck, build, policy, and smoke checks. Decision-Agent reports 60 passing tests and zero pyright errors. The dedicated Codex directory is mode 0700 and `auth.json` is mode 0600; no database, auth file, or `.env` was left in either repository.
+
+### 2026-07-16
+
+- Command: PR Guardian feedback fixes; `scripts/verify.sh`; `pnpm smoke`; live structured Codex App Server turn
+- Scope: PR #18 Codex and CodeRabbit review feedback
+- Result: Passed
+- Notes: Replaced readline protocol buffering with byte-bounded framing, bounded queued notification bytes, consumed final agent text from `item/completed`, hardened cross-chunk path redaction, bounded final messages, normalized Codex error variants, and made cancellation terminal transitions atomic. All 33 Vitest tests, lint, typecheck, build, policy checks, and smoke passed. A real ChatGPT-authenticated structured turn completed with `{ "ok": true }` after the protocol changes.
+
+### 2026-07-16 (PR Guardian continuation)
+
+- Command: `scripts/verify.sh`; Decision-Agent `PYTHONPATH=src python -m unittest discover -s tests`, `uv run pyright`
+- Scope: GitHub Actions Node 24 runtime warnings on PR #18 and Decision-Agent PR #6
+- Result: Passed
+- Notes: Updated affected CI actions to current Node 24-compatible releases and pinned each action to an immutable commit. Refined output sanitization so API routes and HTTP URLs remain valid while local paths and file URLs stay redacted. Crash recovery now atomically emits the terminal cancellation event for interrupted cancelled jobs. Gateway reports 35 passing Vitest tests plus successful lint, typecheck, build, and policy checks. Decision-Agent reports 60 passing tests and zero pyright errors.

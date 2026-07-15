@@ -1,70 +1,42 @@
-# Local Agent Gateway Policy Template
+# Local Agent Gateway V2 Policy
 
-Use this template as the Codex task policy for changes to this repository. It is intentionally stricter than a generic Node.js service policy because this server is the public boundary around local agent execution.
+This repository is security-sensitive local infrastructure.
 
-## Mission
+## Public boundary
 
-Build a personal Gateway API that lets external clients delegate work to local Codex workflows without exposing Codex App Server internals, local filesystem paths, raw working directories, tokens, or unsafe execution controls.
+- Public APIs accept Gateway IDs and strict capability schemas, never raw paths or backend payloads.
+- Do not expose Codex App Server JSON-RPC, thread/turn IDs, stderr, command lines, local absolute paths, or upstream credentials.
+- Never add an arbitrary shell endpoint, generic OpenAI proxy, raw filesystem endpoint, or `danger-full-access` mode.
+- Do not accept ChatGPT tokens or OpenAI API keys in public request bodies.
 
-## Non-Negotiable Constraints
+## Current coding policy
 
-- Do not expose Codex thread IDs, turn IDs, App Server JSON-RPC payloads, raw `cwd`, absolute local paths, token hashes, raw tokens, full prompts, or full steering text through public APIs, events, logs, or artifacts.
-- Do not add arbitrary shell execution, raw filesystem APIs, public App Server proxying, public `thread/shellCommand`, or `danger-full-access`.
-- Do not accept OpenAI API keys, ChatGPT access tokens, refresh tokens, or session secrets in Gateway request bodies.
-- Resolve repos and workspaces only through server-side registries and opaque public IDs.
-- Select task providers only through registered public provider IDs; never expose provider-native session IDs, transports, or raw payloads.
-- Prefer denial when auth, scope, repo, workspace target, sandbox, token lifetime, or audit behavior is ambiguous.
+- The only enabled coding mode is `read-only` with `approvalPolicy: never`.
+- Repositories are resolved only from the server-side registry.
+- App Server starts per job with a dedicated `CODEX_HOME` and environment allowlist.
+- Prompts, results, and event payloads remain encrypted at rest and absent from logs.
+- Queue, concurrency, protocol, event, result, stderr, and time limits must remain bounded.
+- Idempotent API submission and at-least-once Codex execution are distinct guarantees.
 
-## Task Execution Policy
+Read-only is not a confidentiality boundary. Do not represent the service as production-ready for untrusted prompts or repositories until the readable-root isolation gate in `docs/THREAT_MODEL.md` is implemented and verified.
 
-- Public task modes are only `read-only` and `workspace-write`.
-- Public task providers must declare capabilities before use. Non-default providers require explicit `provider:<providerId>` scopes.
-- Workspace targets must require `workspace:<workspaceId>` and matching `repo:<repoId>` scopes.
-- Codex execution must use `approvalPolicy: "never"`.
-- Codex execution must disable network access unless a future policy explicitly proves a narrower safe alternative.
-- `workspace-write` access must be limited to the allowlisted repo or workspace root.
-- Active task control must use Gateway task IDs and server-side handles only.
-- After Gateway startup, stale `queued` or `pending` tasks must fail closed unless prompts and runner handles have a durable recovery design.
+## Future capabilities
 
-## API Compatibility Policy
+- Write mode requires a job-specific worktree/copy and explicit patch or commit application. Do not blindly retry write attempts.
+- Image and audio capabilities require separate OpenAI Platform adapters, scopes, budgets, artifacts, and retention rules.
+- Multi-user support requires external identity, per-owner repository policy, quotas, revocation, audit retention, and tenant separation.
 
-- Preserve existing public API shapes unless the task explicitly requests a breaking change.
-- New client-facing behavior should be additive and documented.
-- Request schemas should reject unknown fields when they carry policy or security meaning.
-- Public responses should remain client-neutral; do not leak implementation backend choices beyond documented provider capability metadata.
+## Verification
 
-## Quality Gates
-
-Run the narrowest useful tests while iterating, then the full verification set before finalizing meaningful changes:
+Run before finalizing meaningful changes:
 
 ```bash
-npm run lint
-npm run typecheck
-npm test
-npm run build
+pnpm lint
+pnpm typecheck
+pnpm test
+pnpm build
+pnpm smoke
 scripts/verify.sh
 ```
 
-For behavior changes, add or update tests first enough to define the contract. For security-sensitive changes, add negative tests for forbidden inputs, missing scopes, and redaction.
-
-## Documentation Gates
-
-Update docs when behavior, commands, configuration, API shape, task lifecycle, security policy, or operational expectations change.
-
-Minimum docs to consider:
-
-- `README.md` for developer/operator quickstart and security summary.
-- `docs/index.md` for user-facing API and operations guidance.
-- Focused docs under `docs/` for client integration, event streaming, task control, workspace targeting, and quality process.
-- This `policy_template.md` when the governing policy itself changes.
-
-## Commit Policy
-
-Prefer small ordered commits:
-
-1. Contract or policy docs.
-2. Focused implementation.
-3. Tests and verification updates.
-4. Follow-up docs cleanup.
-
-Do not mix unrelated refactors with behavior changes.
+Update API, operations, architecture, and threat-model documentation when their corresponding behavior changes.

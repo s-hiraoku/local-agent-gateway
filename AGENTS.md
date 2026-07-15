@@ -31,10 +31,10 @@ The hook scripts are examples. Review and adapt them before registering them in 
 
 Before finalizing meaningful changes, run the relevant checks:
 
-- `npm run lint`
-- `npm run typecheck`
-- `npm test`
-- `npm run build`
+- `pnpm lint`
+- `pnpm typecheck`
+- `pnpm test`
+- `pnpm build`
 - `scripts/verify.sh`
 
 Record important verification runs in `codex/ledger/verification.md` when work spans multiple sessions.

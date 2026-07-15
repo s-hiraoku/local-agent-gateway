@@ -1,135 +1,72 @@
 # Client Integration
 
-This project is a personal Local Agent Gateway API server. It is for safely delegating work from external clients to local agent workflows while keeping provider internals, including Codex App Server internals, behind server-side policy.
+V2 is a breaking replacement for the old `/v1/tasks` API. Clients use Gateway coding runs, conversations, and jobs; they never send repository paths, Codex IDs, backend credentials, model-provider requests, or raw JSON-RPC payloads.
 
-External clients can include CLI tools, web dashboards, desktop apps, mobile apps, automation bots, MCP integrations, CI helpers, and other developer tools. This repository does not implement any of those clients.
+## Stateless structured runs
 
-## Current Architecture
+Clients that need one independent result, including Decision-Agent, should use `POST /v2/coding/runs`. The request requires `repositoryId`, `prompt`, `Idempotency-Key`, and may include `outputSchema`. Conversation creation and job submission are atomic, and the response returns both `jobId` and the internal `conversationId`.
 
-- Fastify exposes the authenticated Gateway API.
-- Codex App Server runs only as an internal stdio JSON-RPC process.
-- Repositories are selected by public repo IDs and resolved through the server-side allowlist.
-- Workspaces are selected by public workspace IDs and resolved through the server-side workspace registry.
-- Task providers are selected by registered public provider IDs. The default is `codex`; non-default providers require explicit `provider:<providerId>` scopes.
-- Public task APIs expose Gateway `taskId`; Codex internal thread IDs and raw `cwd` values stay server-side.
-- Tokens are scoped by operation, repo, workspace, task mode, and non-default provider use.
-- Audit logs store prompt hashes and omitted prompt previews, not full prompts.
-- Public text fields are scrubbed for common absolute local path patterns.
-- Startup marks stale `queued` or `pending` tasks as failed because prompts and active runner handles are not durable.
+When `outputSchema` is supplied, the Gateway accepts a bounded JSON Schema subset, passes it to Codex App Server, parses the final message as exact JSON, and validates it again locally. It never strips Markdown fences or repairs malformed output. Successful jobs expose `structuredOutput`; failures use `STRUCTURED_OUTPUT_INVALID`.
 
-## Existing API Compatibility
+## Workflow
 
-The following API shapes remain stable unless a breaking change is explicitly requested:
+1. Discover an allowlisted repository through `GET /v2/repositories`.
+2. Create a conversation for its public `repositoryId`.
+3. Submit a turn with a unique `Idempotency-Key`.
+4. Store the returned Gateway `jobId`.
+5. Poll `GET /v2/jobs/:id` or connect to its SSE endpoint.
+6. Reconnect SSE with `Last-Event-ID` after a network interruption.
 
-- `GET /healthz`
-- `GET /v1/repos`
-- `GET /v1/workspaces`
-- `POST /v1/tasks`
-- `GET /v1/tasks`
-- `GET /v1/tasks/:id`
-- `POST /v1/tasks/:id/interrupt`
-- `POST /v1/tasks/:id/steer`
-- `GET /v1/audit-logs`
-- token management APIs
-- Codex account APIs
+Every `/v2` request requires:
 
-New client-facing APIs should be additive. Existing task responses should not gain Codex internal IDs, raw paths, raw stream payloads, or other sensitive fields.
+```text
+Authorization: Bearer <gateway owner token>
+```
 
-## Phase G0 / G1 Additions
+## Submission guarantees
 
-Implemented in G1:
+Turn submission is idempotent within the owner boundary:
 
-- Append-only `task_events` storage.
-- `GET /v1/tasks` for authorized task listing with repo, status, and limit filters.
-- `GET /v1/tasks/:id/events` as an authenticated Server-Sent Events replay and live event endpoint.
-- Per-repo in-process serialization for `workspace-write` tasks; `read-only` tasks remain parallel.
-- Configurable `read-only` concurrency with `CODEXGW_MAX_PARALLEL_READ_TASKS`.
-- Minimal normalized Gateway domain events:
-  - `task.queued`
-  - `task.started`
-  - `task.interrupted`
-  - `task.steered`
-  - `agent.message.completed`
-  - `file.changed`
-  - `diff.available`
-  - `task.completed`
-  - `task.failed`
-- `Last-Event-ID` support for replay after a known event ID.
-- A minimal `npm run smoke` check that loads the built app and verifies `GET /healthz`.
+- same key and same request: returns the original job;
+- same key and different request: `409 IDEMPOTENCY_CONFLICT`;
+- queue capacity exhausted: `429 QUEUE_FULL` with `retryable: true`.
 
-Existing task polling responses do not expose Codex internal IDs or raw paths. Task status can now be `queued`, `pending`, `completed`, or `failed`.
+Replaying a key always returns its original job, including when that job failed or was cancelled. A deliberate new attempt therefore requires a new key. Property order in `outputSchema` does not affect request identity.
 
-## Provider Selection
+Codex execution is at-least-once. If the Gateway crashes after sending a read-only turn but before recording completion, the recovered job is attempted again. Attempt history records the restart, but upstream subscription work may be consumed more than once. Future write jobs must not inherit this retry rule without isolated worktrees and an explicit commit/apply protocol.
 
-Implemented provider contract:
+The supported schema subset is intentionally small: object/array/scalar types, `properties`, `required`, `additionalProperties`, `items`, `enum`, `const`, descriptions, and basic numeric/string/array bounds. References, formats, regular-expression keywords, composition keywords, and remote schemas are rejected.
 
-- `GET /v1/providers` returns public provider IDs and capabilities only.
-- `POST /v1/tasks` accepts optional `provider`; omitted means `codex`.
-- Unknown providers, registered providers without a connected runner, or provider/mode capability mismatches fail closed.
-- Non-default providers require `provider:<providerId>` in addition to `task:create`, `repo:<repoId>`, and `mode:<mode>`.
-- Gateway events and task responses may include public provider IDs, but never backend names, raw transports, or provider-native session IDs.
+## Public job
 
-## Workspace Targets
+```json
+{
+  "id": "job_...",
+  "conversationId": "cnv_...",
+  "repositoryId": "gateway",
+  "kind": "coding.turn",
+  "status": "completed",
+  "createdAt": "2026-07-14T00:00:00.000Z",
+  "startedAt": "2026-07-14T00:00:01.000Z",
+  "completedAt": "2026-07-14T00:00:08.000Z",
+  "result": "...",
+  "structuredOutput": null,
+  "error": null
+}
+```
 
-Implemented workspace contract:
+Statuses are `queued`, `running`, `completed`, `failed`, and `cancelled`. Codex thread IDs, turn IDs, process details, command output, stderr, raw paths, and encrypted storage values are never part of this representation.
 
-- `GET /v1/workspaces` returns public workspace IDs and policy ceilings only.
-- `POST /v1/tasks` accepts exactly one target field: `repo` or `workspaceId`.
-- Workspace tasks require both `workspace:<workspaceId>` and matching `repo:<repoId>` scopes.
-- Unknown workspaces, mode ceilings, provider ceilings, raw `cwd`, and `workspacePath` fail closed.
-- Public responses do not expose internal workspace paths or symlink-resolved paths.
+## Error envelope
 
-## Diff Artifacts
+```json
+{
+  "error": {
+    "code": "CODEX_RATE_LIMITED",
+    "message": "Codex plan usage limit was reached",
+    "retryable": true
+  }
+}
+```
 
-Implemented after G1:
-
-- `GET /v1/tasks/:id/diff` returns a generic task artifact for external clients that need to inspect changed files.
-- Authorization matches `GET /v1/tasks/:id`: the creating token can read its own task; other tokens require `task:read` and `repo:<task.repo>`.
-- The server resolves the allowlisted repo path internally and captures the artifact when the task completes.
-- Patch capture uses only fixed git arguments with literal pathspec handling.
-- `GET /v1/tasks/:id/diff` returns the stored artifact and does not inspect the live worktree at request time.
-- Public responses contain Gateway `taskId`, repo ID, task status, repo-relative `changedFiles`, sanitized `patch`, a `truncated` flag, and artifact `createdAt`.
-
-Clients cannot pass raw paths, shell commands, git arguments, or workspace roots to this endpoint.
-
-## Structured Output
-
-Implemented after task control:
-
-- `POST /v1/tasks` accepts an optional `outputSchema` JSON Schema object (at most 16,000 serialized characters). The provider must declare the `structuredOutput` capability; requesting a schema from a provider without it fails closed with `PROVIDER_NOT_ALLOWED`.
-- When a schema is set, the task's final answer is parsed as JSON and stored as a structured artifact. A final answer that does not parse fails the task with `STRUCTURED_OUTPUT_INVALID` — it never completes silently without the promised structure.
-- `GET /v1/tasks/:id` returns the artifact as `structuredOutput` (`null` for tasks created without a schema). String leaf values are path-sanitized on egress with a JSON-aware pass, so clients always receive structurally valid JSON.
-- Interrupted tasks skip structured parsing and complete without `structuredOutput`.
-
-This is the integration surface for machine clients that need typed answers (for example, a review tool that requires `{verdict, confidence, summary, issues[]}`) instead of free text. Poll `GET /v1/tasks/:id` until terminal, then read `structuredOutput`.
-
-## Task Control And Audit Logs
-
-Implemented after diff artifacts:
-
-- `POST /v1/tasks/:id/interrupt` controls only active process-local task sessions.
-- `POST /v1/tasks/:id/steer` accepts a small `{ "message": "..." }` body for active sessions.
-- The creating token can control its own task. A different token requires `task:read`, `task:control`, and `repo:<task.repo>`.
-- Control requests append sanitized `task.interrupted` or `task.steered` events.
-- `GET /v1/audit-logs` requires `audit:read` and returns sanitized records with optional filters.
-
-These APIs still do not expose Codex internal thread IDs, turn IDs, raw `cwd`, or raw App Server payloads. Steering text is not stored in full.
-
-See [`TASK_CONTROL.md`](TASK_CONTROL.md) for the control API guardrails and session model. See [`QUALITY.md`](QUALITY.md) for operational quality gates and known limits.
-
-## APIs Not To Implement
-
-Do not add:
-
-- raw `cwd` APIs.
-- public request fields that accept arbitrary absolute paths.
-- arbitrary shell execution APIs.
-- `danger-full-access` as a public task mode.
-- public `thread/shellCommand`.
-- generic Codex App Server JSON-RPC proxying.
-- public App Server filesystem APIs.
-- request bodies that accept OpenAI API keys, ChatGPT access tokens, refresh tokens, or session secrets.
-- responses that expose Codex internal thread IDs.
-- audit logs that store full prompts or secrets.
-
-When authorization, repo policy, sandbox mode, workspace target policy, or token handling is unclear, deny the request.
+Clients must branch on `code`, not message text. Current stable codes include authentication, validation, not-found, idempotency, queue, cancellation, structured-output validation, Codex authentication/rate/overload/timeout/execution, and internal failures.
