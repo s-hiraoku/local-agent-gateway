@@ -271,3 +271,10 @@ Use this file to record meaningful verification runs.
 - Scope: PR #18 Codex and CodeRabbit review feedback
 - Result: Passed
 - Notes: Replaced readline protocol buffering with byte-bounded framing, bounded queued notification bytes, consumed final agent text from `item/completed`, hardened cross-chunk path redaction, bounded final messages, normalized Codex error variants, and made cancellation terminal transitions atomic. All 33 Vitest tests, lint, typecheck, build, policy checks, and smoke passed. A real ChatGPT-authenticated structured turn completed with `{ "ok": true }` after the protocol changes.
+
+### 2026-07-16 (PR Guardian continuation)
+
+- Command: `scripts/verify.sh`; Decision-Agent `PYTHONPATH=src python -m unittest discover -s tests`, `uv run pyright`
+- Scope: GitHub Actions Node 24 runtime warnings on PR #18 and Decision-Agent PR #6
+- Result: Passed
+- Notes: Updated affected CI actions to current Node 24-compatible releases and pinned each action to an immutable commit. Gateway reports 33 passing Vitest tests plus successful lint, typecheck, build, and policy checks. Decision-Agent reports 60 passing tests and zero pyright errors.
