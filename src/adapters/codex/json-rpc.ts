@@ -1,5 +1,4 @@
 import { spawn } from "node:child_process";
-import { createInterface, type Interface } from "node:readline";
 import type { Readable, Writable } from "node:stream";
 import { GatewayError } from "../../domain/errors.js";
 
@@ -41,6 +40,8 @@ export type JsonRpcOptions = {
   env: NodeJS.ProcessEnv;
   requestTimeoutMs: number;
   maxBufferedNotifications?: number;
+  maxBufferedNotificationBytes?: number;
+  maxProtocolMessageBytes?: number;
   process?: JsonRpcProcess;
 };
 
@@ -50,7 +51,8 @@ export class BufferedJsonRpcTransport {
   private readonly notifications: JsonRpcNotification[] = [];
   private readonly notificationWaiters: NotificationWaiter[] = [];
   private readonly proc: JsonRpcProcess;
-  private readonly lines: Interface;
+  private receiveBuffer = Buffer.alloc(0);
+  private bufferedNotificationBytes = 0;
   private stderrTail = "";
   private closed = false;
   private failure: Error | undefined;
@@ -61,8 +63,7 @@ export class BufferedJsonRpcTransport {
       env: options.env,
       shell: false
     });
-    this.lines = createInterface({ input: this.proc.stdout });
-    this.lines.on("line", (line) => this.handleLine(line));
+    this.proc.stdout.on("data", (chunk: Buffer | string) => this.handleData(chunk));
     this.proc.stderr.on("data", (chunk: Buffer | string) => {
       this.stderrTail = `${this.stderrTail}${String(chunk)}`.slice(-8192);
     });
@@ -111,7 +112,10 @@ export class BufferedJsonRpcTransport {
   nextNotification(timeoutMs: number, signal?: AbortSignal): Promise<JsonRpcNotification> {
     if (this.failure) return Promise.reject(this.failure);
     const buffered = this.notifications.shift();
-    if (buffered) return Promise.resolve(buffered);
+    if (buffered) {
+      this.bufferedNotificationBytes -= notificationBytes(buffered);
+      return Promise.resolve(buffered);
+    }
     if (signal?.aborted) return Promise.reject(signal.reason ?? new Error("Aborted"));
 
     return new Promise((resolve, reject) => {
@@ -138,7 +142,6 @@ export class BufferedJsonRpcTransport {
   close(): void {
     if (this.closed) return;
     this.closed = true;
-    this.lines.close();
     this.failAll(new GatewayError("CODEX_EXECUTION_FAILED", "Codex transport closed", 502, true));
     this.proc.kill("SIGTERM");
   }
@@ -153,13 +156,36 @@ export class BufferedJsonRpcTransport {
     });
   }
 
-  private handleLine(line: string): void {
-    if (Buffer.byteLength(line) > 4 * 1024 * 1024) {
+  private handleData(chunk: Buffer | string): void {
+    const data = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
+    let offset = 0;
+    while (offset < data.byteLength && !this.failure) {
+      const newline = data.indexOf(0x0a, offset);
+      if (newline === -1) {
+        this.appendProtocolFragment(data.subarray(offset));
+        return;
+      }
+      this.appendProtocolFragment(data.subarray(offset, newline));
+      if (this.failure) return;
+      const line = this.receiveBuffer.toString("utf8").replace(/\r$/, "");
+      this.receiveBuffer = Buffer.alloc(0);
+      if (line) this.handleLine(line);
+      offset = newline + 1;
+    }
+  }
+
+  private appendProtocolFragment(fragment: Buffer): void {
+    const limit = this.options.maxProtocolMessageBytes ?? 4 * 1024 * 1024;
+    if (this.receiveBuffer.byteLength + fragment.byteLength > limit) {
       const error = new GatewayError("CODEX_EXECUTION_FAILED", "Codex sent an oversized protocol message", 502, false);
       this.failAll(error);
       this.proc.kill("SIGTERM");
       return;
     }
+    this.receiveBuffer = Buffer.concat([this.receiveBuffer, fragment]);
+  }
+
+  private handleLine(line: string): void {
     let message: unknown;
     try {
       message = JSON.parse(line);
@@ -213,7 +239,9 @@ export class BufferedJsonRpcTransport {
     }
     this.notifications.push(notification);
     const limit = this.options.maxBufferedNotifications ?? 2048;
-    if (this.notifications.length > limit) {
+    this.bufferedNotificationBytes += notificationBytes(notification);
+    const byteLimit = this.options.maxBufferedNotificationBytes ?? 8 * 1024 * 1024;
+    if (this.notifications.length > limit || this.bufferedNotificationBytes > byteLimit) {
       const error = new GatewayError("CODEX_EXECUTION_FAILED", "Codex event buffer overflowed", 502, false);
       this.failAll(error);
       this.proc.kill("SIGTERM");
@@ -240,5 +268,11 @@ export class BufferedJsonRpcTransport {
       waiter.reject(error);
     }
     this.notifications.length = 0;
+    this.bufferedNotificationBytes = 0;
+    this.receiveBuffer = Buffer.alloc(0);
   }
+}
+
+function notificationBytes(notification: JsonRpcNotification): number {
+  return Buffer.byteLength(JSON.stringify(notification));
 }

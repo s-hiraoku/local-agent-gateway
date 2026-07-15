@@ -222,11 +222,15 @@ export class GatewayStore {
     }
     const now = new Date().toISOString();
     await this.db.transaction().execute(async (trx) => {
-      await trx.updateTable("jobs").set({
+      const updated = await trx.updateTable("jobs").set({
         status: "completed",
         encryptedResult: this.secrets.encrypt(result, `job:${jobId}:result`),
         completedAt: now
-      }).where("id", "=", jobId).execute();
+      }).where("id", "=", jobId).where("status", "=", "running").where("cancelRequested", "=", 0).executeTakeFirst();
+      if (Number(updated.numUpdatedRows) !== 1) {
+        await this.finalizeCancellation(trx, jobId, now);
+        return;
+      }
       await trx.updateTable("jobAttempts").set({ status: "completed", completedAt: now })
         .where("jobId", "=", jobId).where("status", "=", "running").execute();
       await this.appendEventWith(trx, jobId, "job.completed", { status: "completed" });
@@ -236,13 +240,17 @@ export class GatewayStore {
   async failJob(jobId: string, code: string, message: string, retryable: boolean): Promise<void> {
     const now = new Date().toISOString();
     await this.db.transaction().execute(async (trx) => {
-      await trx.updateTable("jobs").set({
+      const updated = await trx.updateTable("jobs").set({
         status: "failed",
         errorCode: code,
         errorMessage: message,
         errorRetryable: retryable ? 1 : 0,
         completedAt: now
-      }).where("id", "=", jobId).execute();
+      }).where("id", "=", jobId).where("status", "=", "running").where("cancelRequested", "=", 0).executeTakeFirst();
+      if (Number(updated.numUpdatedRows) !== 1) {
+        await this.finalizeCancellation(trx, jobId, now);
+        return;
+      }
       await trx.updateTable("jobAttempts").set({ status: "failed", errorCode: code, completedAt: now })
         .where("jobId", "=", jobId).where("status", "=", "running").execute();
       await this.appendEventWith(trx, jobId, "job.failed", { code, message, retryable });
@@ -268,11 +276,7 @@ export class GatewayStore {
 
   async markCancelled(jobId: string): Promise<void> {
     await this.db.transaction().execute(async (trx) => {
-      await trx.updateTable("jobs").set({ status: "cancelled", cancelRequested: 1, completedAt: new Date().toISOString() })
-        .where("id", "=", jobId).execute();
-      await trx.updateTable("jobAttempts").set({ status: "cancelled", completedAt: new Date().toISOString() })
-        .where("jobId", "=", jobId).where("status", "=", "running").execute();
-      await this.appendEventWith(trx, jobId, "job.cancelled", { status: "cancelled" });
+      await this.finalizeCancellation(trx, jobId, new Date().toISOString());
     });
   }
 
@@ -306,6 +310,19 @@ export class GatewayStore {
       encryptedData: this.secrets.encrypt(serialized, `job:${jobId}:event:${sequence}`),
       createdAt: new Date().toISOString()
     }).execute();
+  }
+
+  private async finalizeCancellation(executor: DatabaseExecutor, jobId: string, completedAt: string): Promise<boolean> {
+    const updated = await executor.updateTable("jobs").set({
+      status: "cancelled",
+      cancelRequested: 1,
+      completedAt
+    }).where("id", "=", jobId).where("status", "=", "running").executeTakeFirst();
+    if (Number(updated.numUpdatedRows) !== 1) return false;
+    await executor.updateTable("jobAttempts").set({ status: "cancelled", completedAt })
+      .where("jobId", "=", jobId).where("status", "=", "running").execute();
+    await this.appendEventWith(executor, jobId, "job.cancelled", { status: "cancelled" });
+    return true;
   }
 
   private async requireOwnedJob(ownerId: string, id: string, executor: DatabaseExecutor): Promise<JobRow> {

@@ -25,14 +25,18 @@ function createStore(limits = { maxEventBytes: 1024, maxEventsPerJob: 100, maxRe
 }
 
 async function queuedJob(store: GatewayStore) {
+  return queuedJobWithKey(store, "store-request-1");
+}
+
+async function queuedJobWithKey(store: GatewayStore, idempotencyKey: string) {
   const conversation = await store.createConversation("owner", "gateway");
   return store.submitTurn({
     ownerId: "owner",
     conversationId: conversation.id,
     repositoryId: "gateway",
     prompt: "prompt",
-    idempotencyKey: "store-request-1",
-    requestHash: "hash",
+    idempotencyKey,
+    requestHash: idempotencyKey,
     maxQueuedJobs: 10
   });
 }
@@ -84,6 +88,36 @@ describe("GatewayStore", () => {
       .rejects.toThrow(/event exceeded/);
     await expect(store.completeJob(submitted.job.id, "long"))
       .rejects.toThrow(/result exceeded/);
+  });
+
+  it("lets cancellation win atomically over completion and failure", async () => {
+    const { store } = createStore();
+    const completing = await queuedJob(store);
+    await store.claimNextJob();
+    expect(await store.requestCancellation("owner", completing.job.id)).toBe("running");
+    await store.completeJob(completing.job.id, "too late");
+    expect((await store.getJob("owner", completing.job.id)).status).toBe("cancelled");
+    expect((await store.events("owner", completing.job.id)).map((event) => event.type)).toEqual([
+      "job.queued", "job.started", "job.cancelled"
+    ]);
+
+    const failing = await queuedJobWithKey(store, "store-request-2");
+    await store.claimNextJob();
+    expect(await store.requestCancellation("owner", failing.job.id)).toBe("running");
+    await store.failJob(failing.job.id, "CODEX_EXECUTION_FAILED", "too late", true);
+    expect((await store.getJob("owner", failing.job.id)).status).toBe("cancelled");
+  });
+
+  it("does not let late cancellation overwrite completion", async () => {
+    const { store } = createStore();
+    const submitted = await queuedJob(store);
+    await store.claimNextJob();
+    await store.completeJob(submitted.job.id, "done");
+    await store.markCancelled(submitted.job.id);
+    expect((await store.getJob("owner", submitted.job.id)).status).toBe("completed");
+    expect((await store.events("owner", submitted.job.id)).map((event) => event.type)).toEqual([
+      "job.queued", "job.started", "job.completed"
+    ]);
   });
 
   it("replays persisted events after a sequence cursor", async () => {

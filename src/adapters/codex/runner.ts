@@ -148,7 +148,8 @@ export class CodexAppServerRunner implements CodingRunner {
     turnId: string,
     input: CodingRunInput
   ): Promise<string> {
-    let streamed = "";
+    const stream = new PathRedactingStream(input.repositoryPath, this.config.maxResultBytes, input.onEvent);
+    let completedAgentText = "";
     while (true) {
       const notification = await transport.nextNotification(this.config.turnTimeoutMs, input.signal);
       const params = asRecord(notification.params);
@@ -156,9 +157,12 @@ export class CodexAppServerRunner implements CodingRunner {
       if (typeof params.turnId === "string" && params.turnId !== turnId) continue;
 
       if (notification.method === "item/agentMessage/delta" && typeof params.delta === "string") {
-        const delta = sanitizeOutput(params.delta, input.repositoryPath);
-        streamed = appendBounded(streamed, delta, this.config.maxResultBytes);
-        await input.onEvent({ type: "agent.message.delta", data: { delta } });
+        await stream.push(params.delta);
+        continue;
+      }
+      if (notification.method === "item/completed") {
+        const item = asRecord(params.item);
+        if (item.type === "agentMessage" && typeof item.text === "string") completedAgentText = item.text;
         continue;
       }
       if (notification.method !== "turn/completed") continue;
@@ -168,25 +172,30 @@ export class CodexAppServerRunner implements CodingRunner {
       if (status === "interrupted") throw input.signal.reason ?? new Error("Aborted");
       if (status !== "completed") {
         const turnError = asRecord(turn.error);
+        const code = mapCodexInfo(turnError.codexErrorInfo);
         throw new GatewayError(
-          mapCodexInfo(turnError.codexErrorInfo),
+          code,
           "Codex could not complete the coding turn",
-          codexStatus(mapCodexInfo(turnError.codexErrorInfo)),
-          true
+          codexStatus(code),
+          code !== "CODEX_UNAUTHORIZED"
         );
       }
-      const completedText = finalAgentMessage(turn.items, input.repositoryPath);
-      return completedText || streamed;
+      await stream.finish();
+      const finalText = completedAgentText || finalAgentMessage(turn.items);
+      if (!finalText) return stream.result;
+      const bounded = appendBounded("", sanitizeOutput(finalText, input.repositoryPath), this.config.maxResultBytes);
+      await stream.reconcile(bounded);
+      return bounded;
     }
   }
 }
 
-function finalAgentMessage(items: unknown, repositoryPath: string): string {
+function finalAgentMessage(items: unknown): string {
   if (!Array.isArray(items)) return "";
   for (let index = items.length - 1; index >= 0; index -= 1) {
     const item = asRecord(items[index]);
     if (item.type === "agentMessage" && typeof item.text === "string") {
-      return sanitizeOutput(item.text, repositoryPath);
+      return item.text;
     }
   }
   return "";
@@ -196,18 +205,72 @@ function asRecord(value: unknown): Record<string, unknown> {
   return value && typeof value === "object" ? value as Record<string, unknown> : {};
 }
 
-function sanitizeOutput(value: string, repositoryPath: string): string {
+export function sanitizeOutput(value: string, repositoryPath: string): string {
   return value
     .replaceAll(repositoryPath, "[repository]")
     .replaceAll(homedir(), "[home]")
-    .replace(/\/(?:Users|home|tmp|private|Volumes)\/[^\s"'`)}\]]+/g, "[local-path]")
-    .replace(/[A-Za-z]:\\(?:[^\s"'`)}\]]+\\)*[^\s"'`)}\]]+/g, "[local-path]");
+    .replace(/\\\\[^\s"'`)}\],;]+/g, "[local-path]")
+    .replace(/[A-Za-z]:\\[^\s"'`)}\],;]*/g, "[local-path]")
+    .replace(/\/[^\s"'`)}\],;]*/g, "[local-path]");
 }
 
 function appendBounded(current: string, delta: string, maxBytes: number): string {
   const combined = current + delta;
   if (Buffer.byteLength(combined) <= maxBytes) return combined;
-  return Buffer.from(combined).subarray(0, maxBytes).toString("utf8");
+  return Buffer.from(combined).subarray(0, maxBytes).toString("utf8").replace(/\uFFFD$/, "");
+}
+
+export class PathRedactingStream {
+  private carry = "";
+  private emitted = "";
+
+  constructor(
+    private readonly repositoryPath: string,
+    private readonly maxBytes: number,
+    private readonly onEvent: CodingRunInput["onEvent"]
+  ) {}
+
+  get result(): string {
+    return this.emitted;
+  }
+
+  async push(delta: string): Promise<void> {
+    const remaining = Math.max(0, this.maxBytes - Buffer.byteLength(this.emitted));
+    this.carry = appendBounded(this.carry, delta, remaining);
+    let boundary = -1;
+    for (let index = this.carry.length - 1; index >= 0; index -= 1) {
+      if (/\s/u.test(this.carry[index] ?? "")) {
+        boundary = index;
+        break;
+      }
+    }
+    if (boundary < 0) return;
+    const complete = this.carry.slice(0, boundary + 1);
+    this.carry = this.carry.slice(boundary + 1);
+    await this.emitSanitized(complete);
+  }
+
+  async finish(): Promise<void> {
+    const remaining = this.carry;
+    this.carry = "";
+    await this.emitSanitized(remaining);
+  }
+
+  async reconcile(finalResult: string): Promise<void> {
+    if (!finalResult.startsWith(this.emitted)) return;
+    await this.emit(finalResult.slice(this.emitted.length));
+  }
+
+  private async emitSanitized(value: string): Promise<void> {
+    await this.emit(sanitizeOutput(value, this.repositoryPath));
+  }
+
+  private async emit(value: string): Promise<void> {
+    const bounded = appendBounded(this.emitted, value, this.maxBytes);
+    const delta = bounded.slice(this.emitted.length);
+    this.emitted = bounded;
+    if (delta) await this.onEvent({ type: "agent.message.delta", data: { delta } });
+  }
 }
 
 function mapCodexError(error: unknown): GatewayError {
@@ -223,10 +286,11 @@ function mapCodexError(error: unknown): GatewayError {
   return new GatewayError("CODEX_EXECUTION_FAILED", "Codex could not complete the coding turn", 502, true);
 }
 
-function mapCodexInfo(value: unknown): "CODEX_UNAUTHORIZED" | "CODEX_RATE_LIMITED" | "CODEX_OVERLOADED" | "CODEX_EXECUTION_FAILED" {
-  if (value === "unauthorized") return "CODEX_UNAUTHORIZED";
-  if (value === "usageLimitExceeded" || value === "sessionBudgetExceeded") return "CODEX_RATE_LIMITED";
-  if (value === "serverOverloaded") return "CODEX_OVERLOADED";
+export function mapCodexInfo(value: unknown): "CODEX_UNAUTHORIZED" | "CODEX_RATE_LIMITED" | "CODEX_OVERLOADED" | "CODEX_EXECUTION_FAILED" {
+  const normalized = (typeof value === "string" ? value : Object.keys(asRecord(value))[0] ?? "").toLowerCase();
+  if (normalized === "unauthorized") return "CODEX_UNAUTHORIZED";
+  if (normalized === "usagelimitexceeded" || normalized === "sessionbudgetexceeded") return "CODEX_RATE_LIMITED";
+  if (normalized === "serveroverloaded") return "CODEX_OVERLOADED";
   return "CODEX_EXECUTION_FAILED";
 }
 

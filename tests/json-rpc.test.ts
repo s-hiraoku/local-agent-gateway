@@ -63,6 +63,39 @@ describe("BufferedJsonRpcTransport", () => {
     expect(process.kill).toHaveBeenCalled();
     transport.close();
   });
+
+  it("rejects an oversized unterminated protocol message while receiving it", async () => {
+    const process = fakeProcess();
+    const transport = new BufferedJsonRpcTransport({
+      command: "unused",
+      args: [],
+      env: {},
+      requestTimeoutMs: 100,
+      maxProtocolMessageBytes: 8,
+      process
+    });
+    process.stdout.write("123456789");
+    await expect(transport.nextNotification(50)).rejects.toThrow(/oversized protocol message/);
+    expect(process.kill).toHaveBeenCalled();
+    transport.close();
+  });
+
+  it("caps the total bytes retained by queued notifications", async () => {
+    const process = fakeProcess();
+    const transport = new BufferedJsonRpcTransport({
+      command: "unused",
+      args: [],
+      env: {},
+      requestTimeoutMs: 100,
+      maxBufferedNotifications: 10,
+      maxBufferedNotificationBytes: 32,
+      process
+    });
+    process.stdout.write(`${JSON.stringify({ method: "item/started", params: { value: "large" } })}\n`);
+    await expect(transport.nextNotification(50)).rejects.toThrow(/buffer overflowed/);
+    expect(process.kill).toHaveBeenCalled();
+    transport.close();
+  });
 });
 
 describe("buildCodexEnvironment", () => {

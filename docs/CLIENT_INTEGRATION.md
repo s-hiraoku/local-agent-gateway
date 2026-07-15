@@ -14,7 +14,7 @@ When `outputSchema` is supplied, the Gateway accepts a bounded JSON Schema subse
 2. Create a conversation for its public `repositoryId`.
 3. Submit a turn with a unique `Idempotency-Key`.
 4. Store the returned Gateway `jobId`.
-5. poll `GET /v2/jobs/:id` or connect to its SSE endpoint.
+5. Poll `GET /v2/jobs/:id` or connect to its SSE endpoint.
 6. Reconnect SSE with `Last-Event-ID` after a network interruption.
 
 Every `/v2` request requires:

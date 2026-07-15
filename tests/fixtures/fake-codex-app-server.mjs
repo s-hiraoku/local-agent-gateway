@@ -14,7 +14,8 @@ function example(schema) {
     return Object.fromEntries(Object.entries(schema.properties ?? {}).map(([key, child]) => [key, example(child)]));
   }
   if (schema?.type === "array") return [];
-  if (schema?.type === "number" || schema?.type === "integer") return 0.9;
+  if (schema?.type === "integer") return 0;
+  if (schema?.type === "number") return 0.9;
   if (schema?.type === "boolean") return false;
   return "";
 }
@@ -39,11 +40,32 @@ lines.on("line", (line) => {
       send({ id: message.id, error: { code: -32602, message: "outputSchema missing" } });
       return;
     }
+    if (message.params.input?.[0]?.text === "fail unauthorized") {
+      send({ id: message.id, result: { turn: { id: "turn-fake" } } });
+      send({
+        method: "turn/completed",
+        params: {
+          threadId: message.params.threadId,
+          turnId: "turn-fake",
+          turn: { status: "failed", error: { codexErrorInfo: "Unauthorized" }, items: [] }
+        }
+      });
+      return;
+    }
     const output = JSON.stringify(example(message.params.outputSchema));
     send({ id: message.id, result: { turn: { id: "turn-fake" } } });
     send({
       method: "item/agentMessage/delta",
       params: { threadId: message.params.threadId, turnId: "turn-fake", delta: output }
+    });
+    send({
+      method: "item/completed",
+      params: {
+        threadId: message.params.threadId,
+        turnId: "turn-fake",
+        completedAtMs: Date.now(),
+        item: { type: "agentMessage", text: output }
+      }
     });
     send({
       method: "turn/completed",
@@ -52,7 +74,7 @@ lines.on("line", (line) => {
         turnId: "turn-fake",
         turn: {
           status: "completed",
-          items: [{ type: "agentMessage", text: output }]
+          items: []
         }
       }
     });

@@ -264,3 +264,10 @@ Use this file to record meaningful verification runs.
 - Scope: Local single-owner MVP release readiness
 - Result: Passed for trusted local operation
 - Notes: A second real subscription-backed job completed with `{ "ok": true }`. Unauthenticated repository access returned 401, terminal SSE included `job.completed` without exposing the configured absolute repository path, and the encrypted completed result remained readable after a full Gateway restart. Reusing the same request and idempotency key returned the original job with `replayed: true`. Gateway reports 26 passing Vitest tests plus successful lint, typecheck, build, policy, and smoke checks. Decision-Agent reports 60 passing tests and zero pyright errors. The dedicated Codex directory is mode 0700 and `auth.json` is mode 0600; no database, auth file, or `.env` was left in either repository.
+
+### 2026-07-16
+
+- Command: PR Guardian feedback fixes; `scripts/verify.sh`; `pnpm smoke`; live structured Codex App Server turn
+- Scope: PR #18 Codex and CodeRabbit review feedback
+- Result: Passed
+- Notes: Replaced readline protocol buffering with byte-bounded framing, bounded queued notification bytes, consumed final agent text from `item/completed`, hardened cross-chunk path redaction, bounded final messages, normalized Codex error variants, and made cancellation terminal transitions atomic. All 33 Vitest tests, lint, typecheck, build, policy checks, and smoke passed. A real ChatGPT-authenticated structured turn completed with `{ "ok": true }` after the protocol changes.
