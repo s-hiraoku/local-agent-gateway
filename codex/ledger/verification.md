@@ -279,7 +279,7 @@ Use this file to record meaningful verification runs.
 - Result: Passed
 - Notes: Updated affected CI actions to current Node 24-compatible releases and pinned each action to an immutable commit. Refined output sanitization so API routes and HTTP URLs remain valid while local paths and file URLs stay redacted. Crash recovery now atomically emits the terminal cancellation event for interrupted cancelled jobs. Gateway reports 35 passing Vitest tests plus successful lint, typecheck, build, and policy checks. Decision-Agent reports 60 passing tests and zero pyright errors.
 
-### 2026-07-16 (local production)
+### 2026-07-15 (local production)
 
 - Command: `scripts/verify.sh`; installed macOS LaunchAgent; `gatewayctl status`; authenticated and unauthenticated repository requests; forced process crash; `gatewayctl backup`; live Decision-Agent LLM review
 - Scope: Single-owner local-production deployment through a versioned release, login Keychain, and launchd

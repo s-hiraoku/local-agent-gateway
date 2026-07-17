@@ -5,8 +5,8 @@ umask 077
 
 LABEL="com.s-hiraoku.local-agent-gateway"
 BASE="${HOME}/Library/Application Support/local-agent-gateway"
-CONFIG="${BASE}/config"
-CURRENT="${BASE}/current"
+RELEASE="${0:A:h:h}"
+CONFIG="${RELEASE}/config"
 ACCOUNT="${USER}"
 
 fail() {
@@ -14,7 +14,7 @@ fail() {
   exit 1
 }
 
-[[ -d "${CURRENT}" ]] || fail "no active release"
+[[ -d "${RELEASE}" ]] || fail "no active release"
 [[ -f "${CONFIG}/repositories.json" ]] || fail "repository registry is missing"
 [[ -f "${CONFIG}/codex-command" ]] || fail "Codex command configuration is missing"
 [[ -f "${CONFIG}/codex-home" ]] || fail "Codex home configuration is missing"
@@ -23,6 +23,8 @@ CODEX_COMMAND="$(/bin/cat "${CONFIG}/codex-command")"
 CODEX_HOME="$(/bin/cat "${CONFIG}/codex-home")"
 [[ -x "${CODEX_COMMAND}" ]] || fail "configured Codex executable is unavailable"
 [[ -d "${CODEX_HOME}" ]] || fail "dedicated Codex home is unavailable"
+[[ -O "${CODEX_HOME}" ]] || fail "dedicated Codex home must be owned by the current user"
+[[ "$(/usr/bin/stat -f '%Lp' "${CODEX_HOME}")" == "700" ]] || fail "dedicated Codex home must have mode 0700"
 [[ ! -e "${CODEX_HOME}/config.toml" ]] || fail "dedicated Codex home must not contain config.toml"
 
 API_TOKEN="$(/usr/bin/security find-generic-password -a "${ACCOUNT}" -s "${LABEL}.api-token" -w)" \
@@ -39,8 +41,8 @@ export CODEXGW_REPOSITORIES_JSON="$(/bin/cat "${CONFIG}/repositories.json")"
 export CODEXGW_CODEX_COMMAND="${CODEX_COMMAND}"
 export CODEXGW_CODEX_HOME="${CODEX_HOME}"
 export LOG_LEVEL="info"
-export PATH="$(/usr/bin/dirname "${CODEX_COMMAND}"):${CURRENT}/runtime:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin"
+export PATH="$(/usr/bin/dirname "${CODEX_COMMAND}"):${RELEASE}/runtime:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin"
 
 unset API_TOKEN ENCRYPTION_KEY
-cd "${CURRENT}"
-exec "${CURRENT}/runtime/node" "${CURRENT}/dist/index.js"
+cd "${RELEASE}"
+exec "${RELEASE}/runtime/node" "${RELEASE}/dist/index.js"

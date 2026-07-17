@@ -51,8 +51,11 @@ Runtime files live under:
 ```text
 ~/Library/Application Support/local-agent-gateway/
   current -> releases/<timestamp>-<commit>
-  releases/
-  config/repositories.json
+  releases/<timestamp>-<commit>/
+    bin/{launcher.sh,gatewayctl}
+    config/{repositories.json,codex-command,codex-home}
+    dist/
+    runtime/
   data/gateway-v2.sqlite
   logs/
   backups/
@@ -67,8 +70,10 @@ and stored as login Keychain generic-password items:
 
 The LaunchAgent plist contains no credentials. The launcher reads both items
 once, exports them to the Gateway process, and then executes the pinned Node 26
-runtime from the active release. Keychain protects secrets at rest; it does not
-protect them from another process already running as the same compromised user.
+runtime from the release that selected the launcher. The dedicated Codex home
+remains shared authenticated state; releases version only its configured path.
+Keychain protects secrets at rest; it does not protect them from another process
+already running as the same compromised user.
 
 Losing the encryption key makes existing encrypted jobs unreadable. Store a
 copy in a separate encrypted recovery vault. Bearer-token rotation is safe;
@@ -94,9 +99,13 @@ Common commands:
 "$GATEWAYCTL" rollback
 ```
 
-`backup` unloads the LaunchAgent before copying SQLite, then starts it again.
-The backup contains the encrypted database, repository registry, and release
-identifier; it deliberately does not export the Keychain encryption key.
+`backup` registers its restart handler before unloading the LaunchAgent, then
+copies SQLite and any existing WAL, shared-memory, or journal companions before
+starting the service again. The backup also contains the active release's
+repository registry and release identifier; it deliberately does not export the
+Keychain encryption key. Each backup requires a destination path that does not
+already exist, preventing stale SQLite sidecars from being mixed into a new
+snapshot.
 
 `uninstall` removes only the LaunchAgent. It preserves releases, data, logs,
 configuration, backups, and Keychain items.

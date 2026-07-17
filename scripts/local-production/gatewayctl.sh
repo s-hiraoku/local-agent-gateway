@@ -5,6 +5,7 @@ umask 077
 
 LABEL="com.s-hiraoku.local-agent-gateway"
 BASE="${HOME}/Library/Application Support/local-agent-gateway"
+RELEASE="${0:A:h:h}"
 PLIST="${HOME}/Library/LaunchAgents/${LABEL}.plist"
 DOMAIN="gui/$(/usr/bin/id -u)"
 SERVICE="${DOMAIN}/${LABEL}"
@@ -68,27 +69,53 @@ case "${1:-status}" in
     exec /usr/bin/security find-generic-password -a "${USER}" -s "${LABEL}.api-token" -w
     ;;
   repositories)
-    exec /bin/cat "${BASE}/config/repositories.json"
+    exec /bin/cat "${RELEASE}/config/repositories.json"
     ;;
   backup)
     destination="${2:-${BASE}/backups/$(/bin/date -u +%Y%m%dT%H%M%SZ)}"
+    [[ ! -e "${destination}" && ! -L "${destination}" ]] \
+      || { print -u2 -- "Backup destination must be new"; exit 1; }
     was_loaded=0
     if loaded; then
       was_loaded=1
-      stop
     fi
     restore_service() {
-      if [[ "${was_loaded}" -eq 1 ]]; then start; fi
+      local status=$?
+      trap - EXIT INT TERM
+      if [[ "${was_loaded}" -eq 1 ]] && ! start; then
+        print -u2 -- "Backup cleanup could not restart the Gateway"
+        return 1
+      fi
+      return "${status}"
     }
     trap restore_service EXIT INT TERM
-    /bin/mkdir -p "${destination}"
+    if [[ "${was_loaded}" -eq 1 ]]; then
+      stop
+      if loaded; then
+        print -u2 -- "Gateway is still loaded; refusing an inconsistent backup"
+        exit 1
+      fi
+    fi
+    /bin/mkdir "${destination}"
+    [[ -d "${destination}" && ! -L "${destination}" ]] \
+      || { print -u2 -- "Backup destination is not a private directory"; exit 1; }
     /bin/chmod 700 "${destination}"
     if [[ -f "${BASE}/data/gateway-v2.sqlite" ]]; then
       /bin/cp -p "${BASE}/data/gateway-v2.sqlite" "${destination}/"
+      for suffix in -wal -shm -journal; do
+        if [[ -f "${BASE}/data/gateway-v2.sqlite${suffix}" ]]; then
+          /bin/cp -p "${BASE}/data/gateway-v2.sqlite${suffix}" "${destination}/"
+        fi
+      done
     fi
-    /bin/cp -p "${BASE}/config/repositories.json" "${destination}/"
+    /bin/cp -p "${RELEASE}/config/repositories.json" "${destination}/"
     /usr/bin/readlink "${BASE}/current" > "${destination}/release.txt"
     /bin/chmod 600 "${destination}"/*
+    trap - EXIT INT TERM
+    if [[ "${was_loaded}" -eq 1 ]] && ! start; then
+      print -u2 -- "Backup completed but the Gateway could not be restarted"
+      exit 1
+    fi
     print -- "backup: ${destination}"
     print -- "The encryption key remains in Keychain and must be backed up separately in an encrypted recovery store."
     ;;
