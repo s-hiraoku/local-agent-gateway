@@ -100,6 +100,8 @@ Copy [.env.example](.env.example) as a local reference, then start the service t
 pnpm dev
 ```
 
+For an always-on, single-owner macOS installation, use the versioned LaunchAgent deployment instead of `pnpm dev`. It stores secrets in the login Keychain, keeps data outside the release, and provides status, backup, and rollback commands. See [Local production on macOS](docs/LOCAL_PRODUCTION.md).
+
 ## API walkthrough
 
 ```bash
