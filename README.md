@@ -94,6 +94,7 @@ Important optional variables:
 | `CODEXGW_RPC_TIMEOUT_MS` | `30000` |
 | `CODEXGW_TURN_TIMEOUT_MS` | `1800000` |
 | `CODEXGW_RETENTION_DAYS` | `14` |
+| `CODEXGW_INFERENCE_WORKSPACE_ROOT` | `~/.codex-gateway-inference` |
 
 An hourly retention sweep deletes terminal jobs (with their events, attempts, and idempotency records) older than `CODEXGW_RETENTION_DAYS`, plus conversations that no longer have jobs and have not been touched within the window. Queued and running jobs are never touched. Two consequences to know: reusing an `Idempotency-Key` after its record is pruned re-executes the request instead of replaying the stored job, and the SQLite file does not shrink on disk — freed pages are reused by new writes.
 
@@ -132,6 +133,26 @@ curl -X POST http://127.0.0.1:8787/v2/coding/runs \
 ```
 
 On completion, `GET /v2/jobs/:id` contains both the exact JSON text in `result` and the validated value in `structuredOutput`. Invalid JSON or schema mismatch fails with `STRUCTURED_OUTPUT_INVALID`; the Gateway does not repair or extract JSON from Markdown.
+
+For a pure text-in/JSON-out request that does not inspect any repository — a review or classification over supplied text — use the inference endpoint. It takes no `repositoryId`; the Gateway runs it read-only against a private, single-use working directory the client never names, so no repository needs to be registered:
+
+```bash
+curl -X POST http://127.0.0.1:8787/v2/inference/runs \
+  -H "Authorization: Bearer $CODEXGW_API_TOKEN" \
+  -H "Idempotency-Key: decision-review-019f" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "prompt":"Return a review verdict.",
+    "outputSchema":{
+      "type":"object",
+      "properties":{"verdict":{"type":"string","enum":["accept","revise","reject"]}},
+      "required":["verdict"],
+      "additionalProperties":false
+    }
+  }'
+```
+
+Inference jobs poll and read `structuredOutput` exactly like coding runs (`kind` is `inference.turn`, `repositoryId` is `null`).
 
 Create a conversation:
 

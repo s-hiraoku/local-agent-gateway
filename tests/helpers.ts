@@ -13,6 +13,7 @@ export function testConfig(overrides: Partial<GatewayConfig> = {}): GatewayConfi
     repositories: new Map([[repository.id, repository]]),
     codexCommand: "codex",
     codexHome: "/tmp/codexgw-test-home",
+    inferenceWorkspaceRoot: "/tmp/codexgw-test-inference",
     maxQueuedJobs: 10,
     maxConcurrentJobs: 1,
     maxPromptBytes: 64 * 1024,

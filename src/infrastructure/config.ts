@@ -17,6 +17,7 @@ export type GatewayConfig = {
   repositories: ReadonlyMap<string, RepositoryTarget>;
   codexCommand: string;
   codexHome: string;
+  inferenceWorkspaceRoot: string;
   codexModel?: string;
   maxQueuedJobs: number;
   maxConcurrentJobs: number;
@@ -47,8 +48,11 @@ function parseRepositories(raw: string | undefined): ReadonlyMap<string, Reposit
   } catch {
     throw new GatewayError("INVALID_REQUEST", "CODEXGW_REPOSITORIES_JSON must be valid JSON", 500);
   }
-  if (!Array.isArray(input) || input.length === 0) {
-    throw new GatewayError("INVALID_REQUEST", "At least one repository must be configured", 500);
+  // An empty array is valid: a gateway that only serves inference runs needs
+  // no repositories. The variable is still required so the operator opts into
+  // that explicitly rather than by omission.
+  if (!Array.isArray(input)) {
+    throw new GatewayError("INVALID_REQUEST", "CODEXGW_REPOSITORIES_JSON must be a JSON array", 500);
   }
 
   const repositories = new Map<string, RepositoryTarget>();
@@ -98,6 +102,14 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): GatewayConfig 
       500
     );
   }
+  // A dedicated directory that holds only single-use inference workspaces.
+  // It is deliberately separate from codexHome so the read-only inference
+  // cwd can never sit alongside Codex auth material.
+  const inferenceWorkspaceRoot = env.CODEXGW_INFERENCE_WORKSPACE_ROOT
+    ?? join(homedir(), ".codex-gateway-inference");
+  if (!isAbsolute(inferenceWorkspaceRoot)) {
+    throw new GatewayError("INVALID_REQUEST", "CODEXGW_INFERENCE_WORKSPACE_ROOT must be an absolute path", 500);
+  }
   return {
     host: env.CODEXGW_HOST ?? "127.0.0.1",
     port: positiveInteger(env.CODEXGW_PORT, 8787, "CODEXGW_PORT"),
@@ -107,6 +119,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): GatewayConfig 
     repositories: parseRepositories(env.CODEXGW_REPOSITORIES_JSON),
     codexCommand: env.CODEXGW_CODEX_COMMAND ?? "codex",
     codexHome,
+    inferenceWorkspaceRoot,
     ...(model ? { codexModel: model } : {}),
     maxQueuedJobs: positiveInteger(env.CODEXGW_MAX_QUEUED_JOBS, 100, "CODEXGW_MAX_QUEUED_JOBS"),
     maxConcurrentJobs: positiveInteger(env.CODEXGW_MAX_CONCURRENT_JOBS, 2, "CODEXGW_MAX_CONCURRENT_JOBS"),

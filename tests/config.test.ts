@@ -29,6 +29,18 @@ describe("loadConfig", () => {
     expect(() => loadConfig({ ...validEnv(), CODEXGW_RETENTION_DAYS: "0" })).toThrow(/positive integer/);
   });
 
+  it("allows an empty repository registry for inference-only gateways", () => {
+    const config = loadConfig({ ...validEnv(), CODEXGW_REPOSITORIES_JSON: "[]" });
+    expect(config.repositories.size).toBe(0);
+  });
+
+  it("still requires CODEXGW_REPOSITORIES_JSON to be present and an array", () => {
+    const { CODEXGW_REPOSITORIES_JSON: _omitted, ...withoutRepos } = validEnv();
+    void _omitted;
+    expect(() => loadConfig(withoutRepos)).toThrow(/required/);
+    expect(() => loadConfig({ ...validEnv(), CODEXGW_REPOSITORIES_JSON: "{}" })).toThrow(/must be a JSON array/);
+  });
+
   it("rejects relative repository paths", () => {
     expect(() => loadConfig({
       ...validEnv(),
