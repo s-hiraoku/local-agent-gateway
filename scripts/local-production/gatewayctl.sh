@@ -65,8 +65,15 @@ case "${1:-status}" in
   logs)
     exec /usr/bin/tail -n "${2:-100}" -F "${BASE}/logs/gateway.log" "${BASE}/logs/gateway.error.log"
     ;;
-  token)
-    exec /usr/bin/security find-generic-password -a "${USER}" -s "${LABEL}.api-token" -w
+  rotate-token)
+    new_token="$(/usr/bin/openssl rand -hex 32)"
+    /usr/bin/security add-generic-password -U -a "${USER}" -s "${LABEL}.api-token" \
+      -l "${LABEL}.api-token" -j "Local Agent Gateway local-production secret" -w "${new_token}" >/dev/null \
+      || { unset new_token; print -u2 -- "Failed to update token in Keychain"; exit 1; }
+    print -r -- "${new_token}"
+    unset new_token
+    stop >&2
+    start >&2
     ;;
   repositories)
     exec /bin/cat "${RELEASE}/config/repositories.json"
@@ -123,6 +130,7 @@ case "${1:-status}" in
     current="$(cd "${BASE}/current" && pwd -P)"
     previous=""
     for candidate in "${BASE}"/releases/*(N/om); do
+      [[ -e "${candidate}/.pending-activation" ]] && continue
       if [[ "${candidate}" != "${current}" ]]; then
         previous="${candidate}"
         break
@@ -142,7 +150,7 @@ case "${1:-status}" in
     print -- "LaunchAgent removed. Releases, data, logs, configuration, and Keychain items were preserved."
     ;;
   *)
-    print -u2 -- "usage: gatewayctl {start|stop|restart|status|logs [lines]|token|repositories|backup [directory]|rollback|uninstall}"
+    print -u2 -- "usage: gatewayctl {start|stop|restart|status|logs [lines]|rotate-token|repositories|backup [directory]|rollback|uninstall}"
     exit 2
     ;;
 esac
