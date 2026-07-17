@@ -16,7 +16,7 @@ import {
   writeFileSync
 } from "node:fs";
 import { homedir, userInfo } from "node:os";
-import { dirname, join, resolve } from "node:path";
+import { dirname, join, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 
 export const LAUNCH_AGENT_LABEL = "com.s-hiraoku.local-agent-gateway";
@@ -34,6 +34,19 @@ type LaunchAgentInput = {
 };
 
 type RepositoryEntry = { id: string; path: string };
+
+export type DeploymentActions = {
+  activate: (target: string) => void;
+  writePlist: () => void;
+  bootout: () => void;
+  waitForPortAvailable: () => Promise<void>;
+  bootstrap: () => void;
+  kickstart: () => void;
+  waitUntilReady: () => Promise<void>;
+  removeCandidate: () => void;
+  removeCurrent: () => void;
+  removePlist: () => void;
+};
 
 function xml(value: string): string {
   return value.replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;")
@@ -85,6 +98,10 @@ export function canonicalizeRepositoryRegistry(raw: string): RepositoryEntry[] {
   });
 }
 
+export function darwinArchitecture(architecture: string): string {
+  return architecture === "x64" ? "x86_64" : architecture;
+}
+
 function commandPath(name: string): string {
   const output = execFileSync("/usr/bin/which", [name], { encoding: "utf8" }).trim();
   if (!output) throw new Error(`${name} is not installed`);
@@ -115,8 +132,14 @@ function ensureSecrets(account: string): void {
 }
 
 function writePrivate(path: string, value: string): void {
-  writeFileSync(path, value, { mode: 0o600 });
-  chmodSync(path, 0o600);
+  const temporary = `${path}.${process.pid}`;
+  try {
+    writeFileSync(temporary, value, { mode: 0o600 });
+    chmodSync(temporary, 0o600);
+    renameSync(temporary, path);
+  } finally {
+    rmSync(temporary, { force: true });
+  }
 }
 
 function makePrivateDirectory(path: string): void {
@@ -148,20 +171,120 @@ function activeTarget(base: string): string | undefined {
   }
 }
 
-async function waitUntilReady(): Promise<void> {
-  const deadline = Date.now() + 45_000;
+function replaceSymlink(path: string, target: string): void {
+  const temporary = `${path}.${process.pid}`;
+  rmSync(temporary, { force: true });
+  symlinkSync(target, temporary);
+  renameSync(temporary, path);
+}
+
+export function snapshotLegacyReleaseAssets(base: string, target: string): void {
+  const releases = realpathSync(join(base, "releases"));
+  const release = realpathSync(resolve(base, target));
+  if (!release.startsWith(`${releases}${sep}`)) throw new Error("Active release is outside the releases directory");
+
+  const releaseBin = join(release, "bin");
+  const releaseConfig = join(release, "config");
+  makePrivateDirectory(releaseBin);
+  makePrivateDirectory(releaseConfig);
+  for (const [source, destination, mode] of [
+    [join(base, "bin", "launcher.sh"), join(releaseBin, "launcher.sh"), 0o700],
+    [join(base, "bin", "gatewayctl"), join(releaseBin, "gatewayctl"), 0o700],
+    [join(base, "config", "repositories.json"), join(releaseConfig, "repositories.json"), 0o600],
+    [join(base, "config", "codex-command"), join(releaseConfig, "codex-command"), 0o600],
+    [join(base, "config", "codex-home"), join(releaseConfig, "codex-home"), 0o600]
+  ] as const) {
+    if (existsSync(destination)) continue;
+    if (!existsSync(source)) throw new Error(`Cannot snapshot legacy release; missing ${source}`);
+    copyFileSync(source, destination);
+    chmodSync(destination, mode);
+  }
+}
+
+export async function waitUntilReady(
+  timeoutMs = 45_000,
+  requestTimeoutMs = 2_000,
+  retryDelayMs = 1_000
+): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
   let lastError = "service did not answer";
   while (Date.now() < deadline) {
+    const controller = new AbortController();
+    const requestTimeout = setTimeout(
+      () => controller.abort(),
+      Math.max(1, Math.min(requestTimeoutMs, deadline - Date.now()))
+    );
     try {
-      const response = await fetch("http://127.0.0.1:8787/readyz");
+      const response = await fetch("http://127.0.0.1:8787/readyz", { signal: controller.signal });
       if (response.ok) return;
       lastError = `readiness returned ${response.status}`;
     } catch (error) {
       lastError = error instanceof Error ? error.message : String(error);
+    } finally {
+      clearTimeout(requestTimeout);
     }
-    await new Promise((resolvePromise) => setTimeout(resolvePromise, 1_000));
+    const retryDelay = Math.min(retryDelayMs, deadline - Date.now());
+    if (retryDelay > 0) await new Promise((resolvePromise) => setTimeout(resolvePromise, retryDelay));
   }
   throw new Error(`LaunchAgent started but readiness failed: ${lastError}`);
+}
+
+function gatewayPortHasListener(): boolean {
+  const result = spawnSync("/usr/sbin/lsof", ["-nP", "-iTCP:8787", "-sTCP:LISTEN"], { stdio: "ignore" });
+  if (result.status === 0) return true;
+  if (result.status === 1) return false;
+  throw new Error("Could not inspect TCP port 8787 before starting the LaunchAgent");
+}
+
+export async function waitUntilGatewayPortAvailable(
+  timeoutMs = 5_000,
+  retryDelayMs = 100,
+  hasListener: () => boolean = gatewayPortHasListener
+): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  while (hasListener()) {
+    const retryDelay = Math.min(retryDelayMs, deadline - Date.now());
+    if (retryDelay <= 0) throw new Error("TCP port 8787 is already in use");
+    await new Promise((resolvePromise) => setTimeout(resolvePromise, retryDelay));
+  }
+}
+
+export async function activateRelease(
+  candidateTarget: string,
+  previousTarget: string | undefined,
+  actions: DeploymentActions
+): Promise<void> {
+  try {
+    actions.activate(candidateTarget);
+    actions.writePlist();
+    actions.bootout();
+    await actions.waitForPortAvailable();
+    actions.bootstrap();
+    actions.kickstart();
+    await actions.waitUntilReady();
+  } catch (error) {
+    actions.bootout();
+    actions.removeCandidate();
+    if (previousTarget) {
+      try {
+        actions.activate(previousTarget);
+        await actions.waitForPortAvailable();
+        actions.bootstrap();
+        actions.kickstart();
+        await actions.waitUntilReady();
+      } catch (rollbackError) {
+        actions.bootout();
+        throw new Error(
+          `Deployment failed and the previous release could not be restarted: ${rollbackError instanceof Error ? rollbackError.message : String(rollbackError)}`,
+          { cause: error }
+        );
+      }
+    } else {
+      actions.removeCurrent();
+      actions.removePlist();
+    }
+    throw error;
+  }
 }
 
 async function install(): Promise<void> {
@@ -189,10 +312,13 @@ async function install(): Promise<void> {
   const reviewsDirectory = join(base, "workspaces", "reviews");
   makePrivateDirectory(reviewsDirectory);
 
-  const registryPath = join(base, "config", "repositories.json");
+  const previousTarget = activeTarget(base);
+  const versionedRegistryPath = join(base, "current", "config", "repositories.json");
+  const legacyRegistryPath = join(base, "config", "repositories.json");
+  const existingRegistryPath = existsSync(versionedRegistryPath) ? versionedRegistryPath : legacyRegistryPath;
   const suppliedRegistry = option("--repositories-json") ?? process.env.CODEXGW_REPOSITORIES_JSON;
-  const rawRegistry = suppliedRegistry ?? (existsSync(registryPath)
-    ? readFileSync(registryPath, "utf8")
+  const rawRegistry = suppliedRegistry ?? (existsSync(existingRegistryPath)
+    ? readFileSync(existingRegistryPath, "utf8")
     : JSON.stringify([{ id: "reviews", path: reviewsDirectory }]));
   const repositories = canonicalizeRepositoryRegistry(rawRegistry);
 
@@ -227,7 +353,7 @@ async function install(): Promise<void> {
     chmodSync(join(runtime, "node"), 0o755);
     const pnpm = commandPath("pnpm");
     execFileSync("/usr/bin/arch", [
-      `-${process.arch}`, pnpm, "install", "--prod", "--frozen-lockfile"
+      `-${darwinArchitecture(process.arch)}`, pnpm, "install", "--prod", "--frozen-lockfile"
     ], { cwd: staging, stdio: "inherit" });
     const sourceSqlite = realpathSync(join(projectRoot, "node_modules", "better-sqlite3"));
     const releaseSqlite = realpathSync(join(staging, "node_modules", "better-sqlite3"));
@@ -236,56 +362,53 @@ async function install(): Promise<void> {
       join(releaseSqlite, "build", "Release", "better_sqlite3.node")
     );
     execFileSync(join(runtime, "node"), ["-e", "require('better-sqlite3')"], { cwd: staging, stdio: "ignore" });
+    const releaseBin = join(staging, "bin");
+    const releaseConfig = join(staging, "config");
+    makePrivateDirectory(releaseBin);
+    makePrivateDirectory(releaseConfig);
+    copyFileSync(join(scriptDirectory, "local-production", "launcher.sh"), join(releaseBin, "launcher.sh"));
+    copyFileSync(join(scriptDirectory, "local-production", "gatewayctl.sh"), join(releaseBin, "gatewayctl"));
+    chmodSync(join(releaseBin, "launcher.sh"), 0o700);
+    chmodSync(join(releaseBin, "gatewayctl"), 0o700);
+    writePrivate(join(releaseConfig, "repositories.json"), `${JSON.stringify(repositories, null, 2)}\n`);
+    writePrivate(join(releaseConfig, "codex-command"), `${codexCommand}\n`);
+    writePrivate(join(releaseConfig, "codex-home"), `${codexHome}\n`);
     renameSync(staging, release);
   } catch (error) {
     rmSync(staging, { recursive: true, force: true });
     throw error;
   }
 
+  ensureSecrets(account);
+  if (previousTarget) snapshotLegacyReleaseAssets(base, previousTarget);
   const launcher = join(base, "bin", "launcher.sh");
   const gatewayctl = join(base, "bin", "gatewayctl");
-  copyFileSync(join(scriptDirectory, "local-production", "launcher.sh"), launcher);
-  copyFileSync(join(scriptDirectory, "local-production", "gatewayctl.sh"), gatewayctl);
-  chmodSync(launcher, 0o700);
-  chmodSync(gatewayctl, 0o700);
-  writePrivate(registryPath, `${JSON.stringify(repositories, null, 2)}\n`);
-  writePrivate(join(base, "config", "codex-command"), `${codexCommand}\n`);
-  writePrivate(join(base, "config", "codex-home"), `${codexHome}\n`);
-  ensureSecrets(account);
-  const previousTarget = activeTarget(base);
-  activateTarget(base, join("releases", releaseName));
+  replaceSymlink(launcher, "../current/bin/launcher.sh");
+  replaceSymlink(gatewayctl, "../current/bin/gatewayctl");
 
   const launchAgents = join(home, "Library", "LaunchAgents");
   mkdirSync(launchAgents, { recursive: true });
   const plist = join(launchAgents, `${LAUNCH_AGENT_LABEL}.plist`);
-  writePrivate(plist, renderLaunchAgent({
-    launcherPath: launcher,
-    home,
-    user: account,
-    stdoutPath: join(base, "logs", "gateway.log"),
-    stderrPath: join(base, "logs", "gateway.error.log")
-  }));
 
   const domain = `gui/${process.getuid?.() ?? 0}`;
-  try {
-    spawnSync("/bin/launchctl", ["bootout", domain, plist], { stdio: "ignore" });
-    execFileSync("/bin/launchctl", ["bootstrap", domain, plist], { stdio: "inherit" });
-    execFileSync("/bin/launchctl", ["kickstart", "-k", `${domain}/${LAUNCH_AGENT_LABEL}`], { stdio: "inherit" });
-    await waitUntilReady();
-  } catch (error) {
-    spawnSync("/bin/launchctl", ["bootout", domain, plist], { stdio: "ignore" });
-    if (previousTarget) {
-      activateTarget(base, previousTarget);
-      try {
-        execFileSync("/bin/launchctl", ["bootstrap", domain, plist], { stdio: "ignore" });
-        execFileSync("/bin/launchctl", ["kickstart", "-k", `${domain}/${LAUNCH_AGENT_LABEL}`], { stdio: "ignore" });
-        await waitUntilReady();
-      } catch {
-        spawnSync("/bin/launchctl", ["bootout", domain, plist], { stdio: "ignore" });
-      }
-    }
-    throw error;
-  }
+  await activateRelease(join("releases", releaseName), previousTarget, {
+    activate: (target) => activateTarget(base, target),
+    writePlist: () => writePrivate(plist, renderLaunchAgent({
+      launcherPath: launcher,
+      home,
+      user: account,
+      stdoutPath: join(base, "logs", "gateway.log"),
+      stderrPath: join(base, "logs", "gateway.error.log")
+    })),
+    bootout: () => { spawnSync("/bin/launchctl", ["bootout", domain, plist], { stdio: "ignore" }); },
+    waitForPortAvailable: waitUntilGatewayPortAvailable,
+    bootstrap: () => execFileSync("/bin/launchctl", ["bootstrap", domain, plist], { stdio: "inherit" }),
+    kickstart: () => execFileSync("/bin/launchctl", ["kickstart", "-k", `${domain}/${LAUNCH_AGENT_LABEL}`], { stdio: "inherit" }),
+    waitUntilReady,
+    removeCandidate: () => rmSync(release, { recursive: true, force: true }),
+    removeCurrent: () => rmSync(join(base, "current"), { force: true }),
+    removePlist: () => rmSync(plist, { force: true })
+  });
 
   console.log(`Installed release: ${releaseName}`);
   console.log(`Control command: ${gatewayctl}`);
