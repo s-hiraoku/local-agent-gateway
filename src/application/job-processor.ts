@@ -1,4 +1,4 @@
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, readdir, rm } from "node:fs/promises";
 import { join } from "node:path";
 import { GatewayError, normalizeError } from "../domain/errors.js";
 import type { RepositoryTarget } from "../infrastructure/config.js";
@@ -25,10 +25,28 @@ export class JobProcessor {
 
   async start(): Promise<void> {
     this.stopping = false;
+    await this.sweepInferenceWorkspaces();
     await this.store.recoverInterruptedJobs();
     this.timer = setInterval(() => this.schedulePump(), 100);
     this.timer.unref();
     await this.pump();
+  }
+
+  // Remove any inference workspaces left behind by a crash or a failed cleanup.
+  // Per-run rm in finally handles the normal case; this self-heals the rest so
+  // orphaned dirs cannot accumulate across restarts.
+  private async sweepInferenceWorkspaces(): Promise<void> {
+    let entries: string[];
+    try {
+      entries = await readdir(this.inferenceWorkspaceRoot);
+    } catch {
+      return;
+    }
+    await Promise.all(
+      entries
+        .filter((entry) => entry.startsWith("inference-"))
+        .map((entry) => rm(join(this.inferenceWorkspaceRoot, entry), { recursive: true, force: true }).catch(() => undefined))
+    );
   }
 
   async stop(): Promise<void> {

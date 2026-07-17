@@ -67,6 +67,53 @@ function seedV2(path: string): void {
   sqlite.close();
 }
 
+// Seed a V1 database: the jobs table predates encryptedOutputSchema, so the
+// open path must chain V1->V2 (ADD COLUMN) then V2->V3 (rebuild).
+function seedV1(path: string): void {
+  const sqlite = new Database(path);
+  sqlite.pragma("journal_mode = WAL");
+  sqlite.exec(`
+    CREATE TABLE conversations (
+      id TEXT PRIMARY KEY, ownerId TEXT NOT NULL, repositoryId TEXT NOT NULL,
+      backendThreadId TEXT, createdAt TEXT NOT NULL, updatedAt TEXT NOT NULL
+    );
+    CREATE TABLE jobs (
+      id TEXT PRIMARY KEY, ownerId TEXT NOT NULL,
+      conversationId TEXT NOT NULL REFERENCES conversations(id),
+      repositoryId TEXT NOT NULL,
+      kind TEXT NOT NULL CHECK (kind = 'coding.turn'),
+      status TEXT NOT NULL CHECK (status IN ('queued', 'running', 'completed', 'failed', 'cancelled')),
+      encryptedPrompt TEXT NOT NULL, encryptedResult TEXT,
+      errorCode TEXT, errorMessage TEXT, errorRetryable INTEGER NOT NULL DEFAULT 0,
+      cancelRequested INTEGER NOT NULL DEFAULT 0, attempts INTEGER NOT NULL DEFAULT 0,
+      createdAt TEXT NOT NULL, startedAt TEXT, completedAt TEXT
+    );
+    CREATE TABLE jobEvents (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      jobId TEXT NOT NULL REFERENCES jobs(id) ON DELETE CASCADE,
+      sequence INTEGER NOT NULL, type TEXT NOT NULL, encryptedData TEXT NOT NULL,
+      createdAt TEXT NOT NULL, UNIQUE(jobId, sequence)
+    );
+    CREATE TABLE idempotencyRecords (
+      ownerId TEXT NOT NULL, key TEXT NOT NULL, requestHash TEXT NOT NULL,
+      jobId TEXT NOT NULL REFERENCES jobs(id), createdAt TEXT NOT NULL,
+      PRIMARY KEY(ownerId, key)
+    );
+    CREATE TABLE jobAttempts (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      jobId TEXT NOT NULL REFERENCES jobs(id) ON DELETE CASCADE,
+      attempt INTEGER NOT NULL,
+      status TEXT NOT NULL CHECK (status IN ('running', 'completed', 'failed', 'cancelled')),
+      errorCode TEXT, startedAt TEXT NOT NULL, completedAt TEXT, UNIQUE(jobId, attempt)
+    );
+    INSERT INTO conversations VALUES ('cnv1', 'owner', 'gateway', 'thread', 't', 't');
+    INSERT INTO jobs (id, ownerId, conversationId, repositoryId, kind, status, encryptedPrompt, createdAt, completedAt)
+      VALUES ('job1', 'owner', 'cnv1', 'gateway', 'coding.turn', 'completed', 'enc', 't', 't');
+    PRAGMA user_version = 1;
+  `);
+  sqlite.close();
+}
+
 describe("V2 to V3 migration", () => {
   it("preserves existing rows and relaxes the schema for inference", async () => {
     const path = tempDatabasePath();
@@ -96,6 +143,30 @@ describe("V2 to V3 migration", () => {
         "INSERT INTO jobs (id, ownerId, conversationId, repositoryId, kind, status, encryptedPrompt, createdAt) " +
         "VALUES ('job3', 'owner', 'cnv1', 'gateway', 'inference.turn', 'queued', 'enc', 't')"
       ).run()).toThrow();
+    } finally {
+      raw.close();
+      await handle.close();
+    }
+  });
+
+  it("chains a V1 database through V2 to V3", async () => {
+    const path = tempDatabasePath();
+    seedV1(path);
+
+    const handle = openDatabase(path);
+    const raw = new Database(path);
+    try {
+      expect(raw.pragma("user_version", { simple: true })).toBe(3);
+      // V1->V2 added the column; V2->V3 kept the row and relaxed the schema.
+      expect(raw.prepare("SELECT repositoryId, kind, encryptedOutputSchema FROM jobs WHERE id = 'job1'").get())
+        .toEqual({ repositoryId: "gateway", kind: "coding.turn", encryptedOutputSchema: null });
+      expect((raw.pragma("foreign_key_check") as unknown[]).length).toBe(0);
+      raw.pragma("foreign_keys = ON");
+      raw.prepare(
+        "INSERT INTO jobs (id, ownerId, conversationId, repositoryId, kind, status, encryptedPrompt, createdAt) " +
+        "VALUES ('job2', 'owner', 'cnv1', NULL, 'inference.turn', 'queued', 'enc', 't')"
+      ).run();
+      expect(raw.prepare("SELECT repositoryId FROM jobs WHERE id = 'job2'").get()).toEqual({ repositoryId: null });
     } finally {
       raw.close();
       await handle.close();
