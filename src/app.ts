@@ -310,10 +310,34 @@ export async function buildApp(dependencies: AppDependencies): Promise<FastifyIn
     reply.raw.end();
   });
 
+  let retentionTimer: NodeJS.Timeout | undefined;
+  let sweeping = false;
+  const retentionSweep = async () => {
+    if (sweeping) return;
+    sweeping = true;
+    try {
+      const cutoff = new Date(Date.now() - config.retentionDays * 86_400_000).toISOString();
+      const pruned = await store.pruneExpired(cutoff);
+      if (pruned.jobs > 0 || pruned.conversations > 0) {
+        app.log.info({ ...pruned, cutoff }, "retention sweep pruned expired records");
+      }
+    } catch (error) {
+      app.log.error({ err: error }, "retention sweep failed");
+    } finally {
+      sweeping = false;
+    }
+  };
+
   app.addHook("onReady", async () => {
-    if (dependencies.startProcessor !== false) await processor.start();
+    if (dependencies.startProcessor !== false) {
+      await processor.start();
+      await retentionSweep();
+      retentionTimer = setInterval(() => void retentionSweep(), 60 * 60_000);
+      retentionTimer.unref();
+    }
   });
   app.addHook("onClose", async () => {
+    if (retentionTimer) clearInterval(retentionTimer);
     if (dependencies.startProcessor !== false) await processor.stop();
     await dependencies.closeDatabase();
   });

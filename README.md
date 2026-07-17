@@ -93,6 +93,9 @@ Important optional variables:
 | `CODEXGW_MAX_EVENTS_PER_JOB` | `10000` |
 | `CODEXGW_RPC_TIMEOUT_MS` | `30000` |
 | `CODEXGW_TURN_TIMEOUT_MS` | `1800000` |
+| `CODEXGW_RETENTION_DAYS` | `14` |
+
+An hourly retention sweep deletes terminal jobs (with their events, attempts, and idempotency records) older than `CODEXGW_RETENTION_DAYS`, plus conversations that no longer have jobs and have not been touched within the window. Queued and running jobs are never touched. Two consequences to know: reusing an `Idempotency-Key` after its record is pruned re-executes the request instead of replaying the stored job, and the SQLite file does not shrink on disk — freed pages are reused by new writes.
 
 Copy [.env.example](.env.example) as a local reference, then start the service through your secret manager or service definition:
 
