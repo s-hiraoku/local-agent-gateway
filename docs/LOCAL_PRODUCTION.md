@@ -116,9 +116,14 @@ Retrieve the bearer token only when configuring a trusted client:
 
 ```bash
 export DECISION_AGENT_GATEWAY_URL=http://127.0.0.1:8787
-export DECISION_AGENT_GATEWAY_TOKEN="$("$GATEWAYCTL" token)"
+DECISION_AGENT_GATEWAY_TOKEN="$("$GATEWAYCTL" rotate-token)"
+export DECISION_AGENT_GATEWAY_TOKEN
 export DECISION_AGENT_GATEWAY_REPO=reviews
 ```
+
+`rotate-token` replaces the Keychain token, restarts the Gateway, and prints the
+new value once. Capture it directly into the trusted client's secret storage;
+the control command does not provide a read-back operation for existing tokens.
 
 Then run Decision-Agent with `--engine llm`. Decision-Agent never receives the
 ChatGPT login or the Gateway encryption key.

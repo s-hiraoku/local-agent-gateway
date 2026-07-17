@@ -16,6 +16,7 @@ import {
   canonicalizeRepositoryRegistry,
   darwinArchitecture,
   LAUNCH_AGENT_LABEL,
+  quarantineFailedRelease,
   renderLaunchAgent,
   snapshotLegacyReleaseAssets,
   waitUntilGatewayPortAvailable,
@@ -139,7 +140,7 @@ describe("local production installer", () => {
     );
   });
 
-  it.each(["activate", "writePlist", "waitForPortAvailable", "bootstrap", "kickstart", "waitUntilReady"] as const)(
+  it.each(["activate", "writePlist", "waitForPortAvailable", "bootstrap", "kickstart", "waitUntilReady", "markActive"] as const)(
     "restores the previous release when %s fails",
     async (failingAction) => {
       const events: string[] = [];
@@ -160,13 +161,16 @@ describe("local production installer", () => {
         bootstrap: () => run("bootstrap"),
         kickstart: () => run("kickstart"),
         waitUntilReady: async () => run("waitUntilReady"),
+        markActive: () => run("markActive"),
+        removeCandidate: () => { events.push("removeCandidate"); },
         removeCurrent: () => { events.push("removeCurrent"); },
         removePlist: () => { events.push("removePlist"); }
       })).rejects.toThrow(`${failingAction} failed`);
 
       expect(events).toContain("activate:releases/previous");
+      expect(events).toContain("removeCandidate");
       expect(events).not.toContain("removeCurrent");
-      expect(events.at(-1)).toBe("waitUntilReady");
+      expect(events.at(-1)).toBe("removeCandidate");
     }
   );
 
@@ -180,6 +184,8 @@ describe("local production installer", () => {
       bootstrap: () => {},
       kickstart: () => {},
       waitUntilReady: async () => { throw new Error(`readiness ${++readinessCalls}`); },
+      markActive: () => {},
+      removeCandidate: () => {},
       removeCurrent: () => {},
       removePlist: () => {}
     })).rejects.toThrow("Deployment failed and the previous release could not be restarted: readiness 2");
@@ -196,6 +202,8 @@ describe("local production installer", () => {
       bootstrap: () => {},
       kickstart: () => {},
       waitUntilReady: async () => { throw new Error("candidate not ready"); },
+      markActive: () => {},
+      removeCandidate: () => {},
       removeCurrent: () => {},
       removePlist: () => {}
     })).rejects.toThrow("Deployment failed and the previous release could not be restarted: selector restore failed");
@@ -211,10 +219,66 @@ describe("local production installer", () => {
       bootstrap: () => { throw new Error("bootstrap failed"); },
       kickstart: () => {},
       waitUntilReady: async () => {},
+      markActive: () => {},
+      removeCandidate: () => { removed.push("candidate"); },
       removeCurrent: () => { removed.push("current"); },
       removePlist: () => { removed.push("plist"); }
     })).rejects.toThrow("bootstrap failed");
 
-    expect(removed).toEqual(["current", "plist"]);
+    expect(removed).toEqual(["current", "plist", "candidate"]);
+  });
+
+  it("rotates tokens without exposing a read-back command", () => {
+    const script = readFileSync(new URL("../scripts/local-production/gatewayctl.sh", import.meta.url), "utf8");
+
+    expect(script).toContain("  rotate-token)");
+    expect(script).not.toContain("  token)");
+    expect(script).not.toContain("find-generic-password");
+    const rotation = script.slice(script.indexOf("  rotate-token)"), script.indexOf("  repositories)"));
+    expect(rotation.indexOf('print -r -- "${new_token}"')).toBeLessThan(rotation.indexOf("    stop"));
+    expect(rotation).toContain("Failed to update token in Keychain");
+    expect(rotation).toContain("    stop >&2\n    start >&2");
+  });
+
+  it("excludes pending candidates from manual rollback", () => {
+    const script = readFileSync(new URL("../scripts/local-production/gatewayctl.sh", import.meta.url), "utf8");
+    expect(script).toContain('[[ -e "${candidate}/.pending-activation" ]] && continue');
+  });
+
+  it("hides a failed candidate from legacy rollback when deletion fails", () => {
+    const base = mkdtempSync(join(tmpdir(), "codexgw-local-production-"));
+    temporaryDirectories.push(base);
+    const release = join(base, "releases", "candidate");
+    const quarantine = join(base, "releases", ".failed-candidate");
+    mkdirSync(release, { recursive: true });
+
+    quarantineFailedRelease(release, quarantine, () => { throw new Error("permission denied"); });
+
+    expect(() => statSync(release)).toThrow();
+    expect(statSync(quarantine).isDirectory()).toBe(true);
+    expect(quarantine.split("/").at(-1)?.startsWith(".")).toBe(true);
+  });
+
+  it("restores availability before reporting candidate cleanup failure", async () => {
+    const events: string[] = [];
+    let readinessCalls = 0;
+    await expect(activateRelease("releases/candidate", "releases/previous", {
+      activate: (target) => { events.push(`activate:${target}`); },
+      writePlist: () => {},
+      bootout: () => {},
+      waitForPortAvailable: async () => {},
+      bootstrap: () => {},
+      kickstart: () => {},
+      waitUntilReady: async () => {
+        if (++readinessCalls === 1) throw new Error("candidate failed");
+        events.push("previous-ready");
+      },
+      markActive: () => {},
+      removeCandidate: () => { events.push("removeCandidate"); throw new Error("permission denied"); },
+      removeCurrent: () => {},
+      removePlist: () => {}
+    })).rejects.toThrow("rollback completed but the failed candidate could not be removed: permission denied");
+
+    expect(events).toEqual(["activate:releases/candidate", "activate:releases/previous", "previous-ready", "removeCandidate"]);
   });
 });

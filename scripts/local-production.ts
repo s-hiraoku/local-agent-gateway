@@ -43,6 +43,8 @@ export type DeploymentActions = {
   bootstrap: () => void;
   kickstart: () => void;
   waitUntilReady: () => Promise<void>;
+  markActive: () => void;
+  removeCandidate: () => void;
   removeCurrent: () => void;
   removePlist: () => void;
 };
@@ -248,6 +250,19 @@ export async function waitUntilGatewayPortAvailable(
   }
 }
 
+export function quarantineFailedRelease(
+  release: string,
+  quarantine: string,
+  remove: (path: string) => void = (path) => rmSync(path, { recursive: true, force: true })
+): void {
+  renameSync(release, quarantine);
+  try {
+    remove(quarantine);
+  } catch {
+    // A hidden quarantine is intentionally retained when recursive cleanup is unavailable.
+  }
+}
+
 export async function activateRelease(
   candidateTarget: string,
   previousTarget: string | undefined,
@@ -261,6 +276,7 @@ export async function activateRelease(
     actions.bootstrap();
     actions.kickstart();
     await actions.waitUntilReady();
+    actions.markActive();
   } catch (error) {
     actions.bootout();
     if (previousTarget) {
@@ -280,6 +296,14 @@ export async function activateRelease(
     } else {
       actions.removeCurrent();
       actions.removePlist();
+    }
+    try {
+      actions.removeCandidate();
+    } catch (cleanupError) {
+      throw new Error(
+        `Deployment failed; rollback completed but the failed candidate could not be removed: ${cleanupError instanceof Error ? cleanupError.message : String(cleanupError)}`,
+        { cause: error }
+      );
     }
     throw error;
   }
@@ -371,6 +395,7 @@ async function install(): Promise<void> {
     writePrivate(join(releaseConfig, "repositories.json"), `${JSON.stringify(repositories, null, 2)}\n`);
     writePrivate(join(releaseConfig, "codex-command"), `${codexCommand}\n`);
     writePrivate(join(releaseConfig, "codex-home"), `${codexHome}\n`);
+    writePrivate(join(staging, ".pending-activation"), "");
     renameSync(staging, release);
   } catch (error) {
     rmSync(staging, { recursive: true, force: true });
@@ -403,6 +428,11 @@ async function install(): Promise<void> {
     bootstrap: () => execFileSync("/bin/launchctl", ["bootstrap", domain, plist], { stdio: "inherit" }),
     kickstart: () => execFileSync("/bin/launchctl", ["kickstart", "-k", `${domain}/${LAUNCH_AGENT_LABEL}`], { stdio: "inherit" }),
     waitUntilReady,
+    markActive: () => rmSync(join(release, ".pending-activation")),
+    removeCandidate: () => quarantineFailedRelease(
+      release,
+      join(base, "releases", `.failed-${releaseName}`)
+    ),
     removeCurrent: () => rmSync(join(base, "current"), { force: true }),
     removePlist: () => rmSync(plist, { force: true })
   });
