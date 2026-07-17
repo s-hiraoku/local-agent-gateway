@@ -23,6 +23,12 @@ describe("loadConfig", () => {
     expect(() => loadConfig({ ...validEnv(), CODEXGW_DATA_ENCRYPTION_KEY: "bad" })).toThrow(/32 bytes/);
   });
 
+  it("defaults retention to 14 days and rejects non-positive values", () => {
+    expect(loadConfig(validEnv()).retentionDays).toBe(14);
+    expect(loadConfig({ ...validEnv(), CODEXGW_RETENTION_DAYS: "30" }).retentionDays).toBe(30);
+    expect(() => loadConfig({ ...validEnv(), CODEXGW_RETENTION_DAYS: "0" })).toThrow(/positive integer/);
+  });
+
   it("rejects relative repository paths", () => {
     expect(() => loadConfig({
       ...validEnv(),

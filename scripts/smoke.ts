@@ -24,7 +24,8 @@ const config: GatewayConfig = {
   maxEventBytes: 64 * 1024,
   maxEventsPerJob: 10_000,
   rpcTimeoutMs: 1_000,
-  turnTimeoutMs: 1_000
+  turnTimeoutMs: 1_000,
+  retentionDays: 14
 };
 const runner: CodingRunner = {
   async run(input) {

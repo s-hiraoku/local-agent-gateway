@@ -26,6 +26,7 @@ export type GatewayConfig = {
   maxEventsPerJob: number;
   rpcTimeoutMs: number;
   turnTimeoutMs: number;
+  retentionDays: number;
 };
 
 function positiveInteger(value: string | undefined, fallback: number, name: string): number {
@@ -114,6 +115,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): GatewayConfig 
     maxEventBytes: positiveInteger(env.CODEXGW_MAX_EVENT_BYTES, 64 * 1024, "CODEXGW_MAX_EVENT_BYTES"),
     maxEventsPerJob: positiveInteger(env.CODEXGW_MAX_EVENTS_PER_JOB, 10_000, "CODEXGW_MAX_EVENTS_PER_JOB"),
     rpcTimeoutMs: positiveInteger(env.CODEXGW_RPC_TIMEOUT_MS, 30_000, "CODEXGW_RPC_TIMEOUT_MS"),
-    turnTimeoutMs: positiveInteger(env.CODEXGW_TURN_TIMEOUT_MS, 30 * 60_000, "CODEXGW_TURN_TIMEOUT_MS")
+    turnTimeoutMs: positiveInteger(env.CODEXGW_TURN_TIMEOUT_MS, 30 * 60_000, "CODEXGW_TURN_TIMEOUT_MS"),
+    retentionDays: positiveInteger(env.CODEXGW_RETENTION_DAYS, 14, "CODEXGW_RETENTION_DAYS")
   };
 }

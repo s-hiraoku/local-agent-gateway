@@ -9,6 +9,7 @@ import { GatewayStore } from "../src/application/store.js";
 
 const databases: DatabaseHandle[] = [];
 const temporaryDirectories: string[] = [];
+const futureCutoff = "9999-01-01T00:00:00.000Z";
 
 afterEach(async () => {
   await Promise.all(databases.splice(0).map((database) => database.close()));
@@ -144,6 +145,94 @@ describe("GatewayStore", () => {
     const events = await store.events("owner", submitted.job.id, 2);
     expect(events).toHaveLength(1);
     expect(events[0]?.sequence).toBe(3);
+  });
+
+  it("prunes terminal jobs with their events, attempts, and idempotency records", async () => {
+    const { store, database } = createStore();
+    const submitted = await queuedJob(store);
+    await store.claimNextJob();
+    await store.completeJob(submitted.job.id, "ok");
+
+    expect(await store.pruneExpired(futureCutoff)).toEqual({ jobs: 1, conversations: 1 });
+    for (const table of ["jobs", "jobEvents", "jobAttempts", "idempotencyRecords", "conversations"] as const) {
+      expect(await database.db.selectFrom(table).selectAll().execute()).toEqual([]);
+    }
+  });
+
+  it("prunes failed and cancelled jobs too", async () => {
+    const { store } = createStore();
+    const failing = await queuedJobWithKey(store, "retention-fail");
+    await store.claimNextJob();
+    await store.failJob(failing.job.id, "CODEX_EXECUTION_FAILED", "boom", false);
+    const cancelling = await queuedJobWithKey(store, "retention-cancel");
+    await store.requestCancellation("owner", cancelling.job.id);
+
+    expect((await store.pruneExpired(futureCutoff)).jobs).toBe(2);
+  });
+
+  it("never prunes queued or running jobs or their conversations", async () => {
+    const { store, database } = createStore();
+    await queuedJobWithKey(store, "retention-queued");
+    await queuedJobWithKey(store, "retention-running");
+    await store.claimNextJob();
+
+    expect(await store.pruneExpired(futureCutoff)).toEqual({ jobs: 0, conversations: 0 });
+    expect(await database.db.selectFrom("jobs").selectAll().execute()).toHaveLength(2);
+    expect(await database.db.selectFrom("conversations").selectAll().execute()).toHaveLength(2);
+  });
+
+  it("keeps everything newer than the cutoff", async () => {
+    const { store } = createStore();
+    const submitted = await queuedJob(store);
+    await store.claimNextJob();
+    await store.completeJob(submitted.job.id, "ok");
+
+    expect(await store.pruneExpired("1970-01-01T00:00:00.000Z")).toEqual({ jobs: 0, conversations: 0 });
+    expect((await store.getJob("owner", submitted.job.id)).status).toBe("completed");
+  });
+
+  it("prunes strictly before the cutoff", async () => {
+    const { store, database } = createStore();
+    const submitted = await queuedJob(store);
+    await store.claimNextJob();
+    await store.completeJob(submitted.job.id, "ok");
+    const boundary = "2001-01-01T00:00:00.000Z";
+    await database.db.updateTable("jobs").set({ completedAt: boundary }).where("id", "=", submitted.job.id).execute();
+
+    expect((await store.pruneExpired(boundary)).jobs).toBe(0);
+    expect((await store.pruneExpired("2001-01-01T00:00:00.001Z")).jobs).toBe(1);
+  });
+
+  it("re-executes rather than replays an idempotency key after pruning", async () => {
+    const { store } = createStore();
+    const first = await queuedJobWithKey(store, "retention-replay");
+    await store.claimNextJob();
+    await store.completeJob(first.job.id, "ok");
+    await store.pruneExpired(futureCutoff);
+
+    const second = await queuedJobWithKey(store, "retention-replay");
+    expect(second.replayed).toBe(false);
+    expect(second.job.id).not.toBe(first.job.id);
+  });
+
+  it("bumps a conversation's updatedAt when a turn is submitted", async () => {
+    const { store, database } = createStore();
+    const conversation = await store.createConversation("owner", "gateway");
+    const stale = "2000-01-01T00:00:00.000Z";
+    await database.db.updateTable("conversations").set({ updatedAt: stale }).where("id", "=", conversation.id).execute();
+    await store.submitTurn({
+      ownerId: "owner",
+      conversationId: conversation.id,
+      repositoryId: "gateway",
+      prompt: "prompt",
+      idempotencyKey: "retention-bump",
+      requestHash: "retention-bump",
+      maxQueuedJobs: 10
+    });
+
+    const row = await database.db.selectFrom("conversations").selectAll()
+      .where("id", "=", conversation.id).executeTakeFirstOrThrow();
+    expect(row.updatedAt > stale).toBe(true);
   });
 
   it("serializes turns in one conversation while allowing other conversations", async () => {

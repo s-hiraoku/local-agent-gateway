@@ -108,6 +108,8 @@ export class GatewayStore {
       const now = new Date().toISOString();
       const row = this.newJob(input, input.conversationId, id, now);
       await trx.insertInto("jobs").values(row).execute();
+      await trx.updateTable("conversations").set({ updatedAt: now })
+        .where("id", "=", input.conversationId).execute();
       await trx.insertInto("idempotencyRecords").values({
         ownerId: input.ownerId,
         key: input.idempotencyKey,
@@ -273,6 +275,33 @@ export class GatewayStore {
   async markCancelled(jobId: string): Promise<void> {
     await this.db.transaction().execute(async (trx) => {
       await this.finalizeCancellation(trx, jobId, new Date().toISOString());
+    });
+  }
+
+  async pruneExpired(cutoff: string): Promise<{ jobs: number; conversations: number }> {
+    return this.db.transaction().execute(async (trx) => {
+      // Terminal jobs older than the cutoff. completedAt is set on every
+      // terminal transition; createdAt is a defensive fallback so a row can
+      // never become unprunable.
+      const expiredJobs = trx.selectFrom("jobs").select("id")
+        .where("status", "in", ["completed", "failed", "cancelled"])
+        .where((eb) => eb(sql<string>`coalesce("completedAt", "createdAt")`, "<", cutoff));
+      // idempotencyRecords.jobId has no ON DELETE CASCADE, so it goes first.
+      // Reusing an Idempotency-Key after its record is pruned re-executes
+      // instead of replaying; past the retention window that is accepted.
+      await trx.deleteFrom("idempotencyRecords").where("jobId", "in", expiredJobs).execute();
+      const jobs = await trx.deleteFrom("jobs")
+        .where("status", "in", ["completed", "failed", "cancelled"])
+        .where((eb) => eb(sql<string>`coalesce("completedAt", "createdAt")`, "<", cutoff))
+        .executeTakeFirst();
+      const conversations = await trx.deleteFrom("conversations")
+        .where("updatedAt", "<", cutoff)
+        .where("id", "not in", trx.selectFrom("jobs").select("conversationId"))
+        .executeTakeFirst();
+      return {
+        jobs: Number(jobs.numDeletedRows),
+        conversations: Number(conversations.numDeletedRows)
+      };
     });
   }
 

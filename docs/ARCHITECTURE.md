@@ -76,6 +76,8 @@ SQLite is the source of truth for conversations, jobs, attempts, idempotency rec
 
 The initial deployment model is one Gateway process on one private host. SQLite uses conditional transactional claims, WAL, foreign keys, busy timeout, schema versioning, and restricted file permissions. A distributed worker system is unnecessary until horizontal execution is a real requirement.
 
+An hourly retention sweep (one atomic transaction, `CODEXGW_RETENTION_DAYS`) bounds growth on an always-on host: terminal jobs past the window are deleted together with their idempotency records, cascading events and attempts, followed by conversations that have no remaining jobs and were not touched within the window. Queued and running jobs are exempt regardless of age.
+
 Generated binary media will not be stored as SQLite blobs. A future artifact layer will store opaque metadata in SQLite and bytes in a Gateway-owned directory or object store with size, media, hash, ownership, and retention checks.
 
 ## Security invariants

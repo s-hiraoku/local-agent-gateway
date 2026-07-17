@@ -21,6 +21,7 @@ export function testConfig(overrides: Partial<GatewayConfig> = {}): GatewayConfi
     maxEventsPerJob: 10_000,
     rpcTimeoutMs: 1_000,
     turnTimeoutMs: 1_000,
+    retentionDays: 14,
     ...overrides
   };
 }
