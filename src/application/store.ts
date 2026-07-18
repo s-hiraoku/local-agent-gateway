@@ -394,19 +394,35 @@ export class GatewayStore {
     const failuresByErrorCode: Record<string, number> = {};
     for (const row of failureRows) if (row.errorCode) failuresByErrorCode[row.errorCode] = Number(row.count);
 
-    // Completed-job durations within the window. The (status, completedAt)
-    // index serves the row search so the query never scans the whole table;
-    // the windowed set is then sorted (bounded by the window) and the
-    // nearest-rank percentile index is picked here.
-    const durations = await this.db.selectFrom("jobs")
-      .select(sql<number>`(julianday("completedAt") - julianday("startedAt")) * 86400.0`.as("seconds"))
-      .where("status", "=", "completed").where("completedAt", ">=", windowStart)
-      .where("startedAt", "is not", null).orderBy("seconds", "asc").execute();
-    const seconds = durations.map((row) => Number(row.seconds)).filter((value) => Number.isFinite(value) && value >= 0);
+    // SQLite ranks the bounded duration set and returns only the two rows
+    // needed for nearest-rank p50/p95. The application never materializes
+    // every completed duration when this endpoint is polled.
+    const percentileRows = await sql<{ seconds: number; rank: number; total: number }>`
+      WITH durations AS (
+        SELECT (julianday("completedAt") - julianday("startedAt")) * 86400.0 AS seconds
+        FROM jobs
+        WHERE status = 'completed'
+          AND "completedAt" >= ${windowStart}
+          AND "startedAt" IS NOT NULL
+      ), ranked AS (
+        SELECT
+          seconds,
+          ROW_NUMBER() OVER (ORDER BY seconds) AS rank,
+          COUNT(*) OVER () AS total
+        FROM durations
+        WHERE seconds >= 0
+      )
+      SELECT seconds, rank, total
+      FROM ranked
+      WHERE rank = CAST((total + 1) / 2 AS INTEGER)
+         OR rank = CAST((95 * total + 99) / 100 AS INTEGER)
+    `.execute(this.db);
+    const durationCount = Number(percentileRows.rows[0]?.total ?? 0);
     const percentile = (fraction: number): number | null => {
-      if (seconds.length === 0) return null;
-      const index = Math.max(0, Math.min(seconds.length - 1, Math.ceil(fraction * seconds.length) - 1));
-      return Math.round((seconds[index] as number) * 1000) / 1000;
+      if (durationCount === 0) return null;
+      const rank = Math.ceil(fraction * durationCount);
+      const row = percentileRows.rows.find((candidate) => Number(candidate.rank) === rank);
+      return row ? Math.round(Number(row.seconds) * 1000) / 1000 : null;
     };
 
     return {
@@ -422,7 +438,7 @@ export class GatewayStore {
       window: {
         since: windowStart,
         failuresByErrorCode,
-        completedDurationSeconds: { count: seconds.length, p50: percentile(0.5), p95: percentile(0.95) }
+        completedDurationSeconds: { count: durationCount, p50: percentile(0.5), p95: percentile(0.95) }
       },
       uptimeSeconds: Math.round(process.uptime())
     };

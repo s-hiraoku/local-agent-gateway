@@ -281,6 +281,24 @@ describe("GatewayStore", () => {
     expect(metrics.window.failuresByErrorCode).toEqual({});
   });
 
+  it("computes nearest-rank duration percentiles in SQLite", async () => {
+    const { store, database } = createStore();
+    for (let duration = 1; duration <= 20; duration += 1) {
+      const submitted = await queuedJobWithKey(store, `metrics-percentile-${duration}`);
+      await store.claimNextJob();
+      await database.db.updateTable("jobs")
+        .set({ startedAt: "2050-01-01T00:00:00.000Z" })
+        .where("id", "=", submitted.job.id).execute();
+      await store.completeJob(submitted.job.id, "ok");
+      await database.db.updateTable("jobs")
+        .set({ completedAt: new Date(Date.UTC(2050, 0, 1, 0, 0, duration)).toISOString() })
+        .where("id", "=", submitted.job.id).execute();
+    }
+
+    const metrics = await store.metrics("2049-01-01T00:00:00.000Z", "2051-01-01T00:00:00.000Z");
+    expect(metrics.window.completedDurationSeconds).toEqual({ count: 20, p50: 10, p95: 19 });
+  });
+
   it("submits an inference run with a null repository and inference kind", async () => {
     const { store } = createStore();
     const submitted = await store.submitInference({
