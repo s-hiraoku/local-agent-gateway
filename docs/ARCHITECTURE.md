@@ -56,9 +56,11 @@ Expose capabilities, not upstream protocols:
 POST /v2/conversations
 POST /v2/conversations/:id/turns
 POST /v2/coding/runs
+POST /v2/inference/runs
 GET  /v2/jobs/:id
 GET  /v2/jobs/:id/events
 POST /v2/jobs/:id/cancel
+GET  /v2/metrics
 
 # planned
 POST /v2/images/generations
@@ -79,6 +81,8 @@ The initial deployment model is one Gateway process on one private host. SQLite 
 An hourly retention sweep (one atomic transaction, `CODEXGW_RETENTION_DAYS`) bounds growth on an always-on host: terminal jobs past the window are deleted together with their idempotency records, cascading events and attempts, followed by conversations that have no remaining jobs and were not touched within the window. Queued and running jobs are exempt regardless of age.
 
 Jobs carry a `kind`: `coding.turn` targets a registered repository; `inference.turn` (POST `/v2/inference/runs`) carries no `repositoryId` and runs read-only against a private, single-use directory under `CODEXGW_INFERENCE_WORKSPACE_ROOT` that the client never names. The `jobs`/`conversations` `repositoryId` column is nullable for inference; a paired CHECK enforces that `repositoryId IS NULL` exactly when `kind = 'inference.turn'`. This keeps the two capabilities structurally separate — the coding path's repository allowlist can never reach the inference workspace, and the inference path can never target a repository.
+
+Because SQLite is the source of truth, operational metrics (`GET /v2/metrics`) are computed as aggregate queries over it rather than kept as in-memory counters. This is deliberate: an always-on service redeploys often (there is a `GATEWAY_RESTARTED` recovery path), and in-memory counters would reset to zero on every restart, whereas query-derived metrics remain accurate. Duration percentiles use a `(status, completedAt)` index to serve the windowed row search (no full-table scan); the bounded windowed set is then sorted and the nearest-rank percentile taken.
 
 Generated binary media will not be stored as SQLite blobs. A future artifact layer will store opaque metadata in SQLite and bytes in a Gateway-owned directory or object store with size, media, hash, ownership, and retention checks.
 

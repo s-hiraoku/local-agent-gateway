@@ -183,6 +183,17 @@ curl -N -H "Authorization: Bearer $CODEXGW_API_TOKEN" \
   http://127.0.0.1:8787/v2/jobs/job_.../events
 ```
 
+## Metrics
+
+`GET /v2/metrics` (authenticated, same bearer token as every `/v2/*` route) returns a JSON snapshot **derived entirely from SQLite**, so it stays accurate across restarts — unlike in-memory counters, which would reset to zero on every redeploy of an always-on service:
+
+```bash
+curl -H "Authorization: Bearer $CODEXGW_API_TOKEN" \
+  'http://127.0.0.1:8787/v2/metrics?windowHours=24'
+```
+
+It reports job counts by status and by kind, queue depth and the oldest queued job's age, the number of retried jobs (a Codex-flakiness signal), and — over a window (default 24h, 1–168) — failures grouped by error code and completed-job duration percentiles (p50/p95). The percentile query is backed by a `(status, completedAt)` index. `windowHours` bounds both the query cost and the freshness of the latency figures.
+
 ## Security boundary
 
 Gateway credentials and backend credentials are separate. Clients submit only Gateway bearer tokens. App Server inherits a small environment allowlist and a dedicated `CODEX_HOME`; OpenAI API keys are not accepted by public request bodies.
