@@ -1,3 +1,5 @@
+import { mkdtemp, readdir, rm } from "node:fs/promises";
+import { join } from "node:path";
 import { GatewayError, normalizeError } from "../domain/errors.js";
 import type { RepositoryTarget } from "../infrastructure/config.js";
 import type { JobRow } from "../infrastructure/database.js";
@@ -17,15 +19,34 @@ export class JobProcessor {
     private readonly store: GatewayStore,
     private readonly runner: CodingRunner,
     private readonly repositories: ReadonlyMap<string, RepositoryTarget>,
-    private readonly maxConcurrent: number
+    private readonly maxConcurrent: number,
+    private readonly inferenceWorkspaceRoot: string
   ) {}
 
   async start(): Promise<void> {
     this.stopping = false;
+    await this.sweepInferenceWorkspaces();
     await this.store.recoverInterruptedJobs();
     this.timer = setInterval(() => this.schedulePump(), 100);
     this.timer.unref();
     await this.pump();
+  }
+
+  // Remove any inference workspaces left behind by a crash or a failed cleanup.
+  // Per-run rm in finally handles the normal case; this self-heals the rest so
+  // orphaned dirs cannot accumulate across restarts.
+  private async sweepInferenceWorkspaces(): Promise<void> {
+    let entries: string[];
+    try {
+      entries = await readdir(this.inferenceWorkspaceRoot);
+    } catch {
+      return;
+    }
+    await Promise.all(
+      entries
+        .filter((entry) => entry.startsWith("inference-"))
+        .map((entry) => rm(join(this.inferenceWorkspaceRoot, entry), { recursive: true, force: true }).catch(() => undefined))
+    );
   }
 
   async stop(): Promise<void> {
@@ -87,15 +108,27 @@ export class JobProcessor {
   }
 
   private async run(job: JobRow, controller: AbortController): Promise<void> {
-    const repository = this.repositories.get(job.repositoryId);
-    if (!repository) {
-      await this.store.failJob(job.id, "FORBIDDEN", "Repository is no longer available", false);
-      return;
+    let repositoryPath: string;
+    let cleanup: (() => Promise<void>) | undefined;
+    if (job.kind === "inference.turn") {
+      // Inference runs against a private, single-use, empty directory the
+      // client never names. read-only sandbox + an empty cwd means Codex has
+      // nothing local to read; mkdtemp-per-run keeps it stateless.
+      const directory = await mkdtemp(join(this.inferenceWorkspaceRoot, "inference-"));
+      repositoryPath = directory;
+      cleanup = () => rm(directory, { recursive: true, force: true }).catch(() => undefined);
+    } else {
+      const repository = job.repositoryId ? this.repositories.get(job.repositoryId) : undefined;
+      if (!repository) {
+        await this.store.failJob(job.id, "FORBIDDEN", "Repository is no longer available", false);
+        return;
+      }
+      repositoryPath = repository.path;
     }
     try {
       const outputSchema = this.store.decryptOutputSchema(job);
       const result = await this.runner.run({
-        repositoryPath: repository.path,
+        repositoryPath,
         backendThreadId: await this.store.backendThreadId(job.conversationId),
         prompt: this.store.decryptPrompt(job),
         ...(outputSchema ? { outputSchema } : {}),
@@ -116,6 +149,8 @@ export class JobProcessor {
       }
       const normalized = normalizeError(error);
       await this.store.failJob(job.id, normalized.code, normalized.message, normalized.retryable);
+    } finally {
+      await cleanup?.();
     }
   }
 }

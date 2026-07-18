@@ -2,7 +2,7 @@ import { sql, type Kysely, type Transaction } from "kysely";
 import { GatewayError } from "../domain/errors.js";
 import type { JobStatus, PublicEvent, PublicJob } from "../domain/jobs.js";
 import { newId } from "../domain/ids.js";
-import type { GatewayDatabase, JobRow } from "../infrastructure/database.js";
+import type { GatewayDatabase, JobKind, JobRow } from "../infrastructure/database.js";
 import { SecretBox } from "../infrastructure/crypto.js";
 import type { OutputSchema } from "../domain/structured-output.js";
 
@@ -20,6 +20,8 @@ export type SubmitTurnInput = {
 };
 
 export type SubmitRunInput = Omit<SubmitTurnInput, "conversationId">;
+
+export type SubmitInferenceInput = Omit<SubmitRunInput, "repositoryId">;
 
 type StoreLimits = {
   maxEventBytes: number;
@@ -106,7 +108,12 @@ export class GatewayStore {
 
       const id = newId("job");
       const now = new Date().toISOString();
-      const row = this.newJob(input, input.conversationId, id, now);
+      const row = this.newJob(
+        { ownerId: input.ownerId, repositoryId: input.repositoryId, kind: "coding.turn", prompt: input.prompt, outputSchema: input.outputSchema },
+        input.conversationId,
+        id,
+        now
+      );
       await trx.insertInto("jobs").values(row).execute();
       await trx.updateTable("conversations").set({ updatedAt: now })
         .where("id", "=", input.conversationId).execute();
@@ -133,30 +140,78 @@ export class GatewayStore {
         return { job: this.toPublicJob(await this.requireOwnedJob(input.ownerId, existing.jobId, trx)), replayed: true };
       }
 
-      await this.requireQueueCapacity(trx, input.maxQueuedJobs);
-      const conversationId = newId("cnv");
-      const jobId = newId("job");
-      const now = new Date().toISOString();
-      await trx.insertInto("conversations").values({
-        id: conversationId,
+      return this.insertRun(trx, {
         ownerId: input.ownerId,
         repositoryId: input.repositoryId,
-        backendThreadId: null,
-        createdAt: now,
-        updatedAt: now
-      }).execute();
-      const row = this.newJob(input, conversationId, jobId, now);
-      await trx.insertInto("jobs").values(row).execute();
-      await trx.insertInto("idempotencyRecords").values({
-        ownerId: input.ownerId,
-        key: input.idempotencyKey,
+        kind: "coding.turn",
+        prompt: input.prompt,
+        outputSchema: input.outputSchema,
+        idempotencyKey: input.idempotencyKey,
         requestHash: input.requestHash,
-        jobId,
-        createdAt: now
-      }).execute();
-      await this.appendEventWith(trx, jobId, "job.queued", { status: "queued" });
-      return { job: this.toPublicJob(row), replayed: false };
+        maxQueuedJobs: input.maxQueuedJobs
+      });
     });
+  }
+
+  async submitInference(input: SubmitInferenceInput): Promise<{ job: PublicJob; replayed: boolean }> {
+    return this.db.transaction().execute(async (trx) => {
+      const existing = await trx.selectFrom("idempotencyRecords").selectAll()
+        .where("ownerId", "=", input.ownerId).where("key", "=", input.idempotencyKey).executeTakeFirst();
+      if (existing) {
+        if (existing.requestHash !== input.requestHash) {
+          throw new GatewayError("IDEMPOTENCY_CONFLICT", "Idempotency-Key was already used with a different request", 409);
+        }
+        return { job: this.toPublicJob(await this.requireOwnedJob(input.ownerId, existing.jobId, trx)), replayed: true };
+      }
+      return this.insertRun(trx, {
+        ownerId: input.ownerId,
+        repositoryId: null,
+        kind: "inference.turn",
+        prompt: input.prompt,
+        outputSchema: input.outputSchema,
+        idempotencyKey: input.idempotencyKey,
+        requestHash: input.requestHash,
+        maxQueuedJobs: input.maxQueuedJobs
+      });
+    });
+  }
+
+  private async insertRun(
+    trx: Transaction<GatewayDatabase>,
+    input: {
+      ownerId: string;
+      repositoryId: string | null;
+      kind: JobKind;
+      prompt: string;
+      outputSchema: OutputSchema | undefined;
+      idempotencyKey: string;
+      requestHash: string;
+      maxQueuedJobs: number;
+    }
+  ): Promise<{ job: PublicJob; replayed: boolean }> {
+    await this.requireQueueCapacity(trx, input.maxQueuedJobs);
+    const conversationId = newId("cnv");
+    const jobId = newId("job");
+    const now = new Date().toISOString();
+    await trx.insertInto("conversations").values({
+      id: conversationId,
+      ownerId: input.ownerId,
+      repositoryId: input.repositoryId,
+      backendThreadId: null,
+      createdAt: now,
+      updatedAt: now
+    }).execute();
+    const row = this.newJob(input, conversationId, jobId, now);
+    await trx.insertInto("jobs").values(row).execute();
+    await trx.insertInto("idempotencyRecords").values({
+      ownerId: input.ownerId,
+      key: input.idempotencyKey,
+      requestHash: input.requestHash,
+      jobId,
+      createdAt: now
+    }).execute();
+    await this.appendEventWith(trx, jobId, "job.queued", { status: "queued" });
+    return { job: this.toPublicJob(row), replayed: false };
   }
 
   async getJob(ownerId: string, id: string): Promise<PublicJob> {
@@ -365,7 +420,7 @@ export class GatewayStore {
   }
 
   private newJob(
-    input: Pick<SubmitTurnInput, "ownerId" | "repositoryId" | "prompt" | "outputSchema">,
+    input: { ownerId: string; repositoryId: string | null; kind: JobKind; prompt: string; outputSchema: OutputSchema | undefined },
     conversationId: string,
     id: string,
     now: string
@@ -375,7 +430,7 @@ export class GatewayStore {
       ownerId: input.ownerId,
       conversationId,
       repositoryId: input.repositoryId,
-      kind: "coding.turn",
+      kind: input.kind,
       status: "queued",
       encryptedPrompt: this.secrets.encrypt(input.prompt, `job:${id}:prompt`),
       encryptedOutputSchema: input.outputSchema

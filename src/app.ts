@@ -121,7 +121,10 @@ export async function buildApp(dependencies: AppDependencies): Promise<FastifyIn
   });
 
   app.get("/v2/capabilities", async () => ({
-    capabilities: [{ id: "coding.turn", enabled: true, modes: ["read-only"], structuredOutput: true }]
+    capabilities: [
+      { id: "coding.turn", enabled: true, modes: ["read-only"], structuredOutput: true },
+      { id: "inference.turn", enabled: true, modes: ["read-only"], structuredOutput: true }
+    ]
   }));
 
   app.get("/v2/repositories", async () => ({
@@ -169,7 +172,7 @@ export async function buildApp(dependencies: AppDependencies): Promise<FastifyIn
       throw new GatewayError("INVALID_REQUEST", "Prompt exceeds the configured byte limit", 400);
     }
     const conversation = await store.getConversation(request.principalId, conversationId);
-    if (!conversation) throw new GatewayError("NOT_FOUND", "Conversation not found", 404);
+    if (!conversation || conversation.repositoryId === null) throw new GatewayError("NOT_FOUND", "Conversation not found", 404);
     const idempotencyKey = request.headers["idempotency-key"];
     if (typeof idempotencyKey !== "string") {
       throw new GatewayError("INVALID_REQUEST", "Idempotency-Key is required", 400);
@@ -239,6 +242,60 @@ export async function buildApp(dependencies: AppDependencies): Promise<FastifyIn
         version: 2,
         capability: "coding.run",
         repositoryId: body.repositoryId,
+        prompt: body.prompt,
+        outputSchema: outputSchema ?? null
+      })),
+      maxQueuedJobs: config.maxQueuedJobs
+    });
+    processor.wake();
+    return reply.status(202).send({
+      jobId: submitted.job.id,
+      conversationId: submitted.job.conversationId,
+      status: submitted.job.status,
+      replayed: submitted.replayed
+    });
+  });
+
+  app.post("/v2/inference/runs", {
+    schema: {
+      headers: Type.Object({
+        "idempotency-key": Type.String({ minLength: 8, maxLength: 128 })
+      }, { additionalProperties: true }),
+      body: Type.Object({
+        prompt: Type.String({ minLength: 1, maxLength: config.maxPromptBytes }),
+        outputSchema: Type.Optional(Type.Record(Type.String(), Type.Unknown()))
+      }, { additionalProperties: false }),
+      response: {
+        202: Type.Object({
+          jobId: Type.String(),
+          conversationId: Type.String(),
+          status: Type.String(),
+          replayed: Type.Boolean()
+        }),
+        401: ErrorSchema,
+        409: ErrorSchema,
+        429: ErrorSchema
+      }
+    }
+  }, async (request, reply) => {
+    const body = request.body as { prompt: string; outputSchema?: OutputSchema };
+    if (Buffer.byteLength(body.prompt) > config.maxPromptBytes) {
+      throw new GatewayError("INVALID_REQUEST", "Prompt exceeds the configured byte limit", 400);
+    }
+    const idempotencyKey = request.headers["idempotency-key"];
+    if (typeof idempotencyKey !== "string") {
+      throw new GatewayError("INVALID_REQUEST", "Idempotency-Key is required", 400);
+    }
+    const outputSchema = body.outputSchema === undefined ? undefined : validateOutputSchema(body.outputSchema);
+    const secretBox = new SecretBox(config.encryptionKey);
+    const submitted = await store.submitInference({
+      ownerId: request.principalId,
+      prompt: body.prompt,
+      ...(outputSchema ? { outputSchema } : {}),
+      idempotencyKey,
+      requestHash: secretBox.digest(canonicalJson({
+        version: 2,
+        capability: "inference.run",
         prompt: body.prompt,
         outputSchema: outputSchema ?? null
       })),

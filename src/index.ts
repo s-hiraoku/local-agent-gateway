@@ -1,3 +1,4 @@
+import { mkdirSync } from "node:fs";
 import { buildApp } from "./app.js";
 import { CodexAppServerRunner } from "./adapters/codex/runner.js";
 import { JobProcessor } from "./application/job-processor.js";
@@ -7,6 +8,7 @@ import { SecretBox } from "./infrastructure/crypto.js";
 import { openDatabase } from "./infrastructure/database.js";
 
 const config = loadConfig();
+mkdirSync(config.inferenceWorkspaceRoot, { recursive: true, mode: 0o700 });
 const database = openDatabase(config.databasePath);
 const store = new GatewayStore(database.db, new SecretBox(config.encryptionKey), {
   maxEventBytes: config.maxEventBytes,
@@ -21,7 +23,7 @@ const runner = new CodexAppServerRunner({
   turnTimeoutMs: config.turnTimeoutMs,
   maxResultBytes: config.maxResultBytes
 });
-const processor = new JobProcessor(store, runner, config.repositories, config.maxConcurrentJobs);
+const processor = new JobProcessor(store, runner, config.repositories, config.maxConcurrentJobs, config.inferenceWorkspaceRoot);
 const app = await buildApp({
   config,
   store,

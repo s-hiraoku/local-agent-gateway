@@ -235,6 +235,33 @@ describe("GatewayStore", () => {
     expect(row.updatedAt > stale).toBe(true);
   });
 
+  it("submits an inference run with a null repository and inference kind", async () => {
+    const { store } = createStore();
+    const submitted = await store.submitInference({
+      ownerId: "owner",
+      prompt: "judge this",
+      idempotencyKey: "inference-store-1",
+      requestHash: "inference-store-1",
+      maxQueuedJobs: 10
+    });
+    expect(submitted.replayed).toBe(false);
+    expect(submitted.job).toMatchObject({ kind: "inference.turn", repositoryId: null });
+
+    const claimed = await store.claimNextJob();
+    expect(claimed?.kind).toBe("inference.turn");
+    expect(claimed?.repositoryId).toBeNull();
+
+    const replay = await store.submitInference({
+      ownerId: "owner",
+      prompt: "judge this",
+      idempotencyKey: "inference-store-1",
+      requestHash: "inference-store-1",
+      maxQueuedJobs: 10
+    });
+    expect(replay.replayed).toBe(true);
+    expect(replay.job.id).toBe(submitted.job.id);
+  });
+
   it("serializes turns in one conversation while allowing other conversations", async () => {
     const { store } = createStore();
     const firstConversation = await store.createConversation("owner", "gateway");

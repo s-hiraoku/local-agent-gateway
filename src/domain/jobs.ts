@@ -5,8 +5,8 @@ export type JobStatus = "queued" | "running" | "completed" | "failed" | "cancell
 export type PublicJob = {
   id: string;
   conversationId: string;
-  repositoryId: string;
-  kind: "coding.turn";
+  repositoryId: string | null;
+  kind: "coding.turn" | "inference.turn";
   status: JobStatus;
   createdAt: string;
   startedAt: string | null;

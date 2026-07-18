@@ -1,4 +1,7 @@
 import { afterEach, describe, expect, it } from "vitest";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import type { FastifyInstance } from "fastify";
 import { buildApp } from "../src/app.js";
 import type { CodingRunner } from "../src/adapters/codex/runner.js";
@@ -9,13 +12,17 @@ import { openDatabase } from "../src/infrastructure/database.js";
 import { authorization, testConfig } from "./helpers.js";
 
 const apps: FastifyInstance[] = [];
+const inferenceRoots: string[] = [];
 
 afterEach(async () => {
   await Promise.all(apps.splice(0).map((app) => app.close()));
+  for (const root of inferenceRoots.splice(0)) rmSync(root, { recursive: true, force: true });
 });
 
 async function testApp(runner?: CodingRunner, maxQueuedJobs = 10) {
-  const config = testConfig({ maxQueuedJobs });
+  const inferenceWorkspaceRoot = mkdtempSync(join(tmpdir(), "codexgw-inference-root-"));
+  inferenceRoots.push(inferenceWorkspaceRoot);
+  const config = testConfig({ maxQueuedJobs, inferenceWorkspaceRoot });
   const database = openDatabase(":memory:");
   const store = new GatewayStore(database.db, new SecretBox(config.encryptionKey));
   const resolvedRunner: CodingRunner = runner ?? {
@@ -24,7 +31,7 @@ async function testApp(runner?: CodingRunner, maxQueuedJobs = 10) {
       return { backendThreadId: input.backendThreadId ?? "internal-thread-id", result: "done" };
     }
   };
-  const processor = new JobProcessor(store, resolvedRunner, config.repositories, config.maxConcurrentJobs);
+  const processor = new JobProcessor(store, resolvedRunner, config.repositories, config.maxConcurrentJobs, config.inferenceWorkspaceRoot);
   const app = await buildApp({ config, store, processor, closeDatabase: database.close });
   apps.push(app);
   await app.ready();
@@ -203,6 +210,67 @@ describe("V2 API", () => {
     expect(receivedSchema).toEqual(reviewSchema);
     const stored = await database.db.selectFrom("jobs").select("encryptedOutputSchema").executeTakeFirstOrThrow();
     expect(stored.encryptedOutputSchema).not.toContain("verdict");
+  });
+
+  it("runs an inference job against a private cwd with no repository", async () => {
+    let receivedCwd: string | undefined;
+    const runner: CodingRunner = {
+      async run(input) {
+        receivedCwd = input.repositoryPath;
+        return { backendThreadId: "thread", result: JSON.stringify({ verdict: "revise" }) };
+      }
+    };
+    const { app, database } = await testApp(runner);
+    const created = await app.inject({
+      method: "POST",
+      url: "/v2/inference/runs",
+      headers: { ...authorization, "idempotency-key": "inference-0001" },
+      payload: { prompt: "judge this artifact", outputSchema: reviewSchema }
+    });
+    expect(created.statusCode).toBe(202);
+
+    const job = await waitForCompletion(app, created.json().jobId as string);
+    expect(job).toMatchObject({ status: "completed", kind: "inference.turn", repositoryId: null, structuredOutput: { verdict: "revise" } });
+    // The Codex cwd is a gateway-owned dir under the inference root, never a public repo.
+    expect(receivedCwd?.startsWith(inferenceRoots.at(-1) ?? " ")).toBe(true);
+    expect(receivedCwd).not.toBe(process.cwd());
+    // A conversation without a repository is stored NULL, not a sentinel string.
+    const conversation = await database.db.selectFrom("conversations").select("repositoryId").executeTakeFirstOrThrow();
+    expect(conversation.repositoryId).toBeNull();
+  });
+
+  it("keeps inference and coding endpoints structurally separate", async () => {
+    let receivedCwd: string | undefined;
+    const runner: CodingRunner = {
+      async run(input) {
+        receivedCwd = input.repositoryPath;
+        return { backendThreadId: "thread", result: "ok" };
+      }
+    };
+    const { app } = await testApp(runner);
+    // A repositoryId on the inference endpoint is stripped by the schema, never
+    // honored: the run still executes as inference against the private cwd.
+    const withRepo = await app.inject({
+      method: "POST",
+      url: "/v2/inference/runs",
+      headers: { ...authorization, "idempotency-key": "inference-0002" },
+      payload: { prompt: "judge", repositoryId: "gateway" }
+    });
+    expect(withRepo.statusCode).toBe(202);
+    const job = await waitForCompletion(app, withRepo.json().jobId as string);
+    expect(job).toMatchObject({ kind: "inference.turn", repositoryId: null });
+    expect(receivedCwd).not.toBe(process.cwd());
+    // The coding endpoint still cannot reach the inference workspace.
+    const codingTarget = await app.inject({
+      method: "POST",
+      url: "/v2/coding/runs",
+      headers: { ...authorization, "idempotency-key": "inference-0003" },
+      payload: { repositoryId: "__inference__", prompt: "judge" }
+    });
+    expect(codingTarget.statusCode).toBe(404);
+    // The capability is advertised.
+    const capabilities = await app.inject({ method: "GET", url: "/v2/capabilities", headers: authorization });
+    expect(capabilities.json().capabilities.map((c: { id: string }) => c.id)).toContain("inference.turn");
   });
 
   it("rejects unsafe schemas and fails invalid structured output", async () => {

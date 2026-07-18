@@ -17,6 +17,7 @@ const config: GatewayConfig = {
   repositories: new Map([[repository.id, repository]]),
   codexCommand: "codex",
   codexHome: "/tmp/codexgw-smoke",
+  inferenceWorkspaceRoot: "/tmp/codexgw-smoke-inference",
   maxQueuedJobs: 10,
   maxConcurrentJobs: 1,
   maxPromptBytes: 64 * 1024,
@@ -35,7 +36,7 @@ const runner: CodingRunner = {
 };
 const database = openDatabase(":memory:");
 const store = new GatewayStore(database.db, new SecretBox(config.encryptionKey));
-const processor = new JobProcessor(store, runner, config.repositories, 1);
+const processor = new JobProcessor(store, runner, config.repositories, 1, config.inferenceWorkspaceRoot);
 const app = await buildApp({ config, store, processor, closeDatabase: database.close });
 await app.ready();
 
