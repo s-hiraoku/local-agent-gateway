@@ -32,6 +32,8 @@ Production use therefore requires a separately verified execution boundary that 
 
 Output filtering is not an acceptable substitute because secrets can be transformed before output.
 
+The selected target and its required denial tests are specified in [Readable-root isolation design](READABLE_ROOT_ISOLATION.md). That document is a migration design, not evidence that the current LaunchAgent is isolated.
+
 ## Trust expansion rules
 
 Before adding write mode, use a job-specific worktree or copy and return a patch/commit for explicit application. Do not automatically retry write attempts after a crash.

@@ -110,14 +110,16 @@ Read-only is not considered a complete confidentiality boundary. The required ho
 
 Usage records must keep subscription-backed coding separate from Platform API spend. Gateway limits apply in addition to upstream limits.
 
-## Delivery sequence
+## Remaining delivery sequence
 
-1. Prove OS-level execution isolation and real dedicated-`CODEX_HOME` subscription authentication.
-2. Add Codex CLI version/schema contract tests, account status, rate-limit visibility, retention, and telemetry.
+Dedicated-`CODEX_HOME` authentication, retention, and query-derived operational metrics are implemented for trusted local operation. The remaining sequence is:
+
+1. Implement and prove the VM-based readable-root boundary in [Readable-root isolation design](READABLE_ROOT_ISOLATION.md).
+2. Add Codex CLI version/schema contract tests, explicit rate-limit visibility, and encrypted-payload key rotation.
 3. Implement write turns in isolated worktrees with patch/commit artifacts and no blind crash retry.
 4. Add encrypted artifact storage and bounded image generation/editing.
 5. Add file transcription and speech generation.
-6. Add Platform usage budgets and per-capability policy.
+6. Add Platform usage budgets, telemetry exporters, and per-capability policy.
 7. Add realtime sessions only with a concrete low-latency client requirement.
 8. Add multi-user identity only after tenant isolation and audit requirements are defined.
 

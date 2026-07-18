@@ -2,41 +2,43 @@
 
 ## Current Goal
 
-- Goal: Build a secure personal Codex Gateway API server.
+- Goal: Operate and harden a secure personal Codex Gateway API server.
 - Owner: Codex
 - Started: 2026-05-05
-- Status: Development environment setup in progress.
+- Status: Trusted local V2 is operational; confidentiality hardening remains in progress.
 
 ## Context
 
 - Repository: local-agent-gateway
-- Branch: codex/mvp-user-guide-harness
-- Related issue or PR:
-- Important files: AGENTS.md, package.json, src/, tests/, scripts/verify.sh, policies/strict.yaml
+- Branch: `codex/remaining-hardening`
+- Related PRs: #23 (merged metrics), #13 (superseded Renovate onboarding)
+- Important files: `README.md`, `docs/THREAT_MODEL.md`, `docs/READABLE_ROOT_ISOLATION.md`, `docs/LOCAL_PRODUCTION.md`, `src/`, `tests/`, `scripts/verify.sh`
 
-## Plan
+## Delivered
 
-- [x] Inspect current state
-- [x] Install codex-harnesses project-local harness
-- [x] Add TypeScript/Fastify/Vitest development foundation
-- [x] Implement authentication, authorization, repo policy, token APIs, task APIs, Codex SDK boundary, and audit logs
-- [x] Run full verification
+- [x] Authenticated read-only coding conversations and atomic structured runs
+- [x] Repository-free structured inference runs
+- [x] Durable encrypted SQLite jobs, attempts, events, idempotency, and retention
+- [x] Bounded Codex App Server execution, cancellation, recovery, and SSE
+- [x] Authenticated SQLite-derived operational metrics
+- [x] Versioned macOS LaunchAgent deployment, backup, rollback, and Keychain secrets
+- [x] CI, smoke tests, policy checks, and local-production verification
 
-## Progress
+## Active Hardening
 
-- 2026-05-05: Confirmed `codex-harnesses` exists locally and is up to date.
-- 2026-05-05: Installed strict guidance, policy, verification script, selected skills, hooks, and ledger files.
-- 2026-05-05: Added initial Node/TypeScript/Fastify/Vitest project foundation.
-- 2026-05-05: Implemented secure MVP Gateway APIs with SQLite-backed token/task/audit storage.
-- 2026-05-05: Ran midpoint and final sub-agent security reviews; fixed findings around SDK env, bootstrap production use, token lifetime, repo enumeration, per-repo modes, prompt preview, path redaction, and thread ID exposure.
+- [x] Record the readable-root threat and an implementation-ready isolation design
+- [x] Define a conservative Renovate policy with no automerge
+- [ ] Select and provision the VM/runtime used for the readable-root boundary
+- [ ] Verify real Codex login and structured runs inside that boundary
+- [ ] Migrate the installed service only after backup and rollback rehearsal
 
 ## Blockers
 
-- None recorded.
+- A real readable-root boundary requires an operator-selected VM/runtime and host-level migration. Repository changes alone cannot safely provision or authenticate it.
 
 ## Next Step
 
-- Open a normal, review-ready PR for review.
+- Review `docs/READABLE_ROOT_ISOLATION.md`, choose the VM/runtime, and run the documented proof before treating untrusted prompts or repositories as supported.
 
 ## Checkpoints
 

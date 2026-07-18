@@ -40,15 +40,19 @@ scripts/verify.sh
 
 CI repeats clean installation, lint, typecheck, tests, build, and harness verification on Node.js 26.
 
-## Release gates before real external use
+## Trusted-local release evidence
 
-- Run an actual ChatGPT-authenticated structured Codex App Server turn with the dedicated `CODEX_HOME` in the deployment environment.
-- Verify authentication persistence, expiry, logout behavior, and error normalization.
-- Prove that personal MCP configuration is not loaded.
-- Add and test an OS-level readable-root boundary that hides HOME, SSH, cloud credentials, other repositories, and Gateway secrets.
-- Test cancel/complete/shutdown races and App Server crash recovery.
+- Real ChatGPT-authenticated structured coding and inference runs pass with the dedicated `CODEX_HOME`.
+- Startup rejects a dedicated home containing `config.toml`; App Server receives an explicit environment allowlist.
+- Cancellation, shutdown, crash recovery, SSE replay, retention, encrypted restart recovery, backup, rollback, and idempotent replay have automated or recorded live verification.
+- The versioned macOS deployment binds to `127.0.0.1`, keeps bearer authentication enabled, and stores runtime secrets in the login Keychain.
+
+## Remaining gates before untrusted external use
+
+- Implement and prove the OS-level readable-root boundary in [Readable-root isolation design](READABLE_ROOT_ISOLATION.md).
+- Verify authentication expiry and logout behavior inside the selected boundary.
 - Add Codex CLI compatibility checks based on generated version-specific App Server schemas.
-- Exercise SSE reconnect and slow-consumer behavior with a real network client.
-- Define encrypted-payload key rotation, retention cleanup, backup, and restore procedures.
+- Exercise slow-consumer behavior with a real network client under production limits.
+- Implement transactional encrypted-payload key rotation and rehearse recovery after rotation.
 
 Until those gates pass, the service is suitable only for trusted clients, a dedicated local service identity, and trusted repositories.
