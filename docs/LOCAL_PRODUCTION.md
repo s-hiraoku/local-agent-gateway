@@ -5,6 +5,8 @@ This deployment is for one trusted owner on one Mac. It binds only to
 the Gateway's read-only Codex policy. It is not a confidentiality boundary for
 untrusted prompts or repositories.
 
+For the future untrusted-input boundary, see [Readable-root isolation design](READABLE_ROOT_ISOLATION.md). Installing the LaunchAgent does not implement that design.
+
 ## Install
 
 Requirements:

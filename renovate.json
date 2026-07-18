@@ -1,0 +1,32 @@
+{
+  "$schema": "https://docs.renovatebot.com/renovate-schema.json",
+  "extends": [
+    "config:best-practices"
+  ],
+  "timezone": "Asia/Tokyo",
+  "schedule": [
+    "* 0-5 * * 1"
+  ],
+  "dependencyDashboard": true,
+  "automerge": false,
+  "prConcurrentLimit": 3,
+  "prHourlyLimit": 1,
+  "packageRules": [
+    {
+      "description": "Keep Node.js on the supported major",
+      "matchDepNames": ["node"],
+      "allowedVersions": ">=26 <27"
+    },
+    {
+      "description": "Keep pnpm on the supported major",
+      "matchDepNames": ["pnpm"],
+      "allowedVersions": ">=11 <12"
+    },
+    {
+      "description": "Group non-major development dependency updates",
+      "matchDepTypes": ["devDependencies"],
+      "matchUpdateTypes": ["minor", "patch"],
+      "groupName": "non-major development dependencies"
+    }
+  ]
+}

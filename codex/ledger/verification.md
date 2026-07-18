@@ -285,3 +285,10 @@ Use this file to record meaningful verification runs.
 - Scope: Single-owner local-production deployment through a versioned release, login Keychain, and launchd
 - Result: Passed after installer portability fixes
 - Notes: Gateway reports 37 passing Vitest tests plus successful lint, typecheck, build, policy, and zsh syntax checks. The installed service uses a copied Node 26 arm64 runtime and matching arm64 better-sqlite3 addon, listens only on `127.0.0.1:8787`, returns 401 without the bearer token and 200 with it, recovered after SIGKILL, and produced a mode-0600 stopped-service SQLite backup. A live Decision-Agent request completed through the resident Gateway with `engine: llm:gateway:codex`. Initial installation attempts safely exposed and then fixed Codex status stderr handling, Volta shim resolution, native-addon architecture reuse, and asynchronous backup restart readiness.
+
+### 2026-07-18
+
+- Command: targeted metrics tests; `scripts/verify.sh`; `pnpm smoke`; `renovate-config-validator --strict`; GitHub CI for PR #23
+- Scope: Metrics review feedback, current-state ledger refresh, readable-root isolation design, and conservative Renovate configuration
+- Result: Passed
+- Notes: Metrics percentiles are ranked inside SQLite and only the p50/p95 rows cross into the application; 3 targeted files/33 tests and the full 10-file/80-test suite passed on Node 26.3.1. Lint, typecheck, build, policy, shell syntax, smoke, and PR #23 CI passed. The current Renovate distribution accepted `renovate.json` in strict validation mode. The VM isolation document is a design and acceptance plan, not evidence that the current LaunchAgent has a readable-root boundary.
