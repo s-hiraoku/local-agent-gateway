@@ -394,9 +394,10 @@ export class GatewayStore {
     const failuresByErrorCode: Record<string, number> = {};
     for (const row of failureRows) if (row.errorCode) failuresByErrorCode[row.errorCode] = Number(row.count);
 
-    // Completed-job durations within the window. Percentiles are computed in
-    // SQL over the (status, completedAt) index so the endpoint never scans an
-    // ever-growing table or pulls rows into memory.
+    // Completed-job durations within the window. The (status, completedAt)
+    // index serves the row search so the query never scans the whole table;
+    // the windowed set is then sorted (bounded by the window) and the
+    // nearest-rank percentile index is picked here.
     const durations = await this.db.selectFrom("jobs")
       .select(sql<number>`(julianday("completedAt") - julianday("startedAt")) * 86400.0`.as("seconds"))
       .where("status", "=", "completed").where("completedAt", ">=", windowStart)
@@ -404,8 +405,8 @@ export class GatewayStore {
     const seconds = durations.map((row) => Number(row.seconds)).filter((value) => Number.isFinite(value) && value >= 0);
     const percentile = (fraction: number): number | null => {
       if (seconds.length === 0) return null;
-      const index = Math.min(seconds.length - 1, Math.ceil(fraction * seconds.length) - 1);
-      return Math.round((seconds[Math.max(0, index)] ?? 0) * 1000) / 1000;
+      const index = Math.max(0, Math.min(seconds.length - 1, Math.ceil(fraction * seconds.length) - 1));
+      return Math.round((seconds[index] as number) * 1000) / 1000;
     };
 
     return {

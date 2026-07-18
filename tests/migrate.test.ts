@@ -114,7 +114,67 @@ function seedV1(path: string): void {
   sqlite.close();
 }
 
+// Seed a V3 database: the inference-era schema (nullable repositoryId, both
+// kinds, paired CHECK) but WITHOUT the jobs_completed_idx that V4 adds. This
+// is the pre-existing-live-DB case that the V3->V4 index migration must fix.
+function seedV3(path: string): void {
+  const sqlite = new Database(path);
+  sqlite.pragma("journal_mode = WAL");
+  sqlite.exec(`
+    CREATE TABLE conversations (
+      id TEXT PRIMARY KEY, ownerId TEXT NOT NULL, repositoryId TEXT,
+      backendThreadId TEXT, createdAt TEXT NOT NULL, updatedAt TEXT NOT NULL
+    );
+    CREATE TABLE jobs (
+      id TEXT PRIMARY KEY, ownerId TEXT NOT NULL,
+      conversationId TEXT NOT NULL REFERENCES conversations(id),
+      repositoryId TEXT,
+      kind TEXT NOT NULL CHECK (kind IN ('coding.turn', 'inference.turn')),
+      status TEXT NOT NULL CHECK (status IN ('queued', 'running', 'completed', 'failed', 'cancelled')),
+      encryptedPrompt TEXT NOT NULL, encryptedOutputSchema TEXT, encryptedResult TEXT,
+      errorCode TEXT, errorMessage TEXT, errorRetryable INTEGER NOT NULL DEFAULT 0,
+      cancelRequested INTEGER NOT NULL DEFAULT 0, attempts INTEGER NOT NULL DEFAULT 0,
+      createdAt TEXT NOT NULL, startedAt TEXT, completedAt TEXT,
+      CHECK ((kind = 'inference.turn') = (repositoryId IS NULL))
+    );
+    CREATE INDEX jobs_queue_idx ON jobs(status, createdAt);
+    CREATE INDEX jobs_owner_idx ON jobs(ownerId, createdAt DESC);
+    INSERT INTO conversations VALUES ('cnv1', 'owner', 'gateway', 'thread', 't', 't');
+    INSERT INTO jobs (id, ownerId, conversationId, repositoryId, kind, status, encryptedPrompt, createdAt, completedAt)
+      VALUES ('job1', 'owner', 'cnv1', 'gateway', 'coding.turn', 'completed', 'enc', 't', 't');
+    PRAGMA user_version = 3;
+  `);
+  sqlite.close();
+}
+
 describe("V2 to V3 migration", () => {
+  it("adds the metrics index when upgrading a pre-existing V3 database", async () => {
+    const path = tempDatabasePath();
+    seedV3(path);
+    // Before the upgrade the percentile query cannot use an index.
+    const before = new Database(path);
+    const beforePlan = (before.prepare(
+      "EXPLAIN QUERY PLAN SELECT completedAt FROM jobs WHERE status = 'completed' AND completedAt >= '2000-01-01'"
+    ).all() as Array<{ detail: string }>).map((row) => row.detail).join(" ");
+    before.close();
+    expect(beforePlan).not.toContain("jobs_completed_idx");
+
+    const handle = openDatabase(path);
+    const raw = new Database(path);
+    try {
+      expect(raw.pragma("user_version", { simple: true })).toBe(4);
+      // The existing row is untouched (index migration is additive).
+      expect(raw.prepare("SELECT COUNT(*) AS n FROM jobs").get()).toEqual({ n: 1 });
+      const plan = raw.prepare(
+        "EXPLAIN QUERY PLAN SELECT completedAt FROM jobs WHERE status = 'completed' AND completedAt >= '2000-01-01'"
+      ).all() as Array<{ detail: string }>;
+      expect(plan.some((row) => row.detail.includes("jobs_completed_idx"))).toBe(true);
+    } finally {
+      raw.close();
+      await handle.close();
+    }
+  });
+
   it("preserves existing rows and relaxes the schema for inference", async () => {
     const path = tempDatabasePath();
     seedV2(path);
