@@ -288,7 +288,7 @@ Use this file to record meaningful verification runs.
 
 ### 2026-07-18
 
-- Command: targeted metrics tests; `scripts/verify.sh`; `pnpm smoke`; GitHub CI for PR #23
+- Command: targeted metrics tests; `scripts/verify.sh`; `pnpm smoke`; `renovate-config-validator --strict`; GitHub CI for PR #23
 - Scope: Metrics review feedback, current-state ledger refresh, readable-root isolation design, and conservative Renovate configuration
 - Result: Passed
-- Notes: Metrics percentiles are ranked inside SQLite and only the p50/p95 rows cross into the application; 3 targeted files/33 tests and the full 10-file/80-test suite passed on Node 26.3.1. Lint, typecheck, build, policy, shell syntax, smoke, and PR #23 CI passed. `renovate.json` parsed successfully; its options were checked against the current official Renovate configuration documentation. The VM isolation document is a design and acceptance plan, not evidence that the current LaunchAgent has a readable-root boundary.
+- Notes: Metrics percentiles are ranked inside SQLite and only the p50/p95 rows cross into the application; 3 targeted files/33 tests and the full 10-file/80-test suite passed on Node 26.3.1. Lint, typecheck, build, policy, shell syntax, smoke, and PR #23 CI passed. The current Renovate distribution accepted `renovate.json` in strict validation mode. The VM isolation document is a design and acceptance plan, not evidence that the current LaunchAgent has a readable-root boundary.

@@ -10,8 +10,8 @@
 ## Context
 
 - Repository: local-agent-gateway
-- Branch: `codex/remaining-hardening`
-- Related PRs: #23 (merged metrics), #13 (superseded Renovate onboarding)
+- Target branch: `main`
+- Related PRs: #23 (merged metrics), #25 (hardening documentation and Renovate), #13 (superseded Renovate onboarding)
 - Important files: `README.md`, `docs/THREAT_MODEL.md`, `docs/READABLE_ROOT_ISOLATION.md`, `docs/LOCAL_PRODUCTION.md`, `src/`, `tests/`, `scripts/verify.sh`
 
 ## Delivered
@@ -32,9 +32,22 @@
 - [ ] Verify real Codex login and structured runs inside that boundary
 - [ ] Migrate the installed service only after backup and rollback rehearsal
 
+## Deferred Backlog
+
+- Codex CLI generated-schema/version compatibility checks
+- transactional encryption-key rotation
+- durable retention-sweep observability (Issue #24)
+- write-capable worktrees and patch/commit artifacts
+- image, audio, and realtime capability adapters
+- artifact retention and telemetry exporters
+- multi-user identity, tenant isolation, and per-owner policy
+
+These are explicit follow-up projects, not omissions from the current hardening task.
+
 ## Blockers
 
-- A real readable-root boundary requires an operator-selected VM/runtime and host-level migration. Repository changes alone cannot safely provision or authenticate it.
+- A real readable-root boundary requires an operator-selected VM/runtime, credential supervisor, network policy, and host-level migration. Repository changes alone cannot safely provision or authenticate it.
+- Decision owner: the human operator must approve the VM/runtime, guest networking, credential migration, backup, and rollback plan before host changes begin.
 
 ## Next Step
 

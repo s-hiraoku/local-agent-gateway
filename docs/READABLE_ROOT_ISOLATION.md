@@ -27,7 +27,9 @@ Do not mount the host HOME, Gateway data, logs, backups, SSH agent, cloud config
 
 Repository sharing must fail closed. Each public repository ID maps to one exact guest path. Prefer a read-only snapshot copied into the VM; if the selected VM supports read-only mounts with enforceable semantics, verify attempted writes and sibling traversal empirically before relying on them.
 
-The executor still contains the dedicated Codex authentication state needed by App Server. A VM alone does not prevent a tool subprocess running as the same guest identity from reading that file. The selected executor must therefore prove that App Server tool processes can read the repository but cannot read `CODEX_HOME`, using an OS sandbox, privilege separation, or an upstream-supported credential broker. If that denial cannot be demonstrated, the design protects host and Gateway assets but remains incomplete for malicious prompts.
+The executor still contains the dedicated Codex authentication state needed by App Server. A VM alone does not prevent a tool subprocess running as the same guest identity from reading that file. The selected executor therefore needs an inner privilege boundary: a credential-owning supervisor or upstream-supported auth broker must be separate from the unprivileged tool executor, and the tool environment and inherited file descriptors must be scrubbed. App Server tool processes must be proven able to read the repository but unable to read `CODEX_HOME`. If that denial cannot be demonstrated, the design protects host and Gateway assets but remains incomplete for malicious prompts.
+
+Guest networking must also fail closed. The host-to-guest App Server transport must be private and mutually authenticated. The guest must not reach the host control-plane listener, Keychain services, metadata endpoints, or other private networks. Outbound internet access must be denied by default or restricted to the minimum documented endpoints required for Codex operation; the acceptance evidence must record the effective policy. Otherwise any guest-readable credential remains exfiltratable even when host mounts are absent.
 
 ## Controls that do not satisfy the objective
 
@@ -44,13 +46,13 @@ These remain useful defense in depth, but none proves that unrelated readable ho
 
 ## Provisioning sequence
 
-1. Select and pin a VM runtime, guest image, and fixed App Server transport. Record their versions and update policy.
+1. Select and pin a VM runtime, guest image, mutually authenticated App Server transport, and deny-by-default network policy. Record their versions and update policy.
 2. Install a pinned Codex CLI inside the guest; keep Gateway and SQLite on the host control plane.
 3. Create separate guest paths for `CODEX_HOME` and disposable inference workspaces with restrictive permissions and no host-parent mount.
 4. Authenticate the dedicated Codex home interactively inside the guest and verify that it contains no personal `config.toml` or MCP configuration.
 5. Copy or mount one test repository read-only. Do not expose a parent directory or the host checkout containing Gateway secrets.
 6. Add an executor adapter that starts only the fixed VM transport; clients must not select a command, guest path, or VM.
-7. Prove that tool subprocesses cannot read `CODEX_HOME` before using real authentication with untrusted prompts.
+7. Separate the credential-owning supervisor from the tool executor, scrub inherited environment/file descriptors, and prove that tool subprocesses cannot read `CODEX_HOME` before using real authentication with untrusted prompts.
 8. Run the remaining acceptance suite and a backup/restore rehearsal before migrating the resident service.
 
 ## Acceptance tests
@@ -61,6 +63,8 @@ The boundary is not complete until evidence records all of the following:
 - a real inference run succeeds in a private single-use guest directory;
 - attempts to read host HOME, SSH material, cloud configuration, another repository, Gateway secrets, and backup paths fail at the filesystem boundary;
 - attempts by a Codex tool subprocess to read `CODEX_HOME`, its authentication file, or a same-directory canary fail at the guest filesystem boundary while App Server authentication still works;
+- tool subprocesses receive no authentication-bearing environment variables or inherited file descriptors;
+- guest egress matches the documented allowlist, and attempts to reach the host control plane, private host services, metadata endpoints, or unrelated networks fail;
 - `..`, symlink, file-URL, absolute-path, and process-environment probes do not escape the shared repository;
 - the repository is non-writable from the Codex process;
 - the Gateway listener is reachable only through host `127.0.0.1` and still requires its bearer token;
@@ -78,8 +82,9 @@ Rollback by stopping host port forwarding, restarting the existing LaunchAgent r
 
 ## Operator decisions still required
 
-- VM runtime, lifecycle manager, and fixed App Server transport;
-- the guest privilege-separation or sandbox mechanism that hides Codex authentication from tool subprocesses;
+- VM runtime, lifecycle manager, and private mutually authenticated App Server transport;
+- the guest credential supervisor/auth broker and privilege-separation mechanism that hides Codex authentication from tool subprocesses;
+- the minimum Codex network allowlist and its enforcement point;
 - repository copy versus verified read-only mount;
 - guest secret storage and encrypted backup destination;
 - guest update cadence and Codex CLI pinning;

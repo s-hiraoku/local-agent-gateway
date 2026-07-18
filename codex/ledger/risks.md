@@ -7,7 +7,7 @@
 - Risk: The current macOS LaunchAgent runs as the interactive owner. Read-only mode prevents mutation but does not prove that Codex cannot read HOME, credentials, or other repositories.
 - Impact: A malicious prompt or repository instruction could exfiltrate host-readable data through a model response.
 - Likelihood: Material whenever prompts or repositories are not fully trusted.
-- Mitigation: Restrict current use to trusted clients and repositories. Implement and verify the dedicated-VM boundary in `docs/READABLE_ROOT_ISOLATION.md` before expanding trust.
+- Mitigation: Restrict current use to trusted clients and repositories. Implement and verify the split host/VM boundary, inner credential privilege separation, and deny-by-default guest networking in `docs/READABLE_ROOT_ISOLATION.md` before expanding trust.
 - Status: Open; release-blocking for untrusted input.
 
 ### 2026-07-18: Encryption key has no rotation workflow
