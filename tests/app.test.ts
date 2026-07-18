@@ -77,6 +77,31 @@ describe("V2 API", () => {
     expect(response.json()).toEqual({ repositories: [{ id: "gateway" }] });
   });
 
+  it("exposes an authenticated metrics snapshot", async () => {
+    const { app } = await testApp();
+    // Inherits the /v2 bearer hook: no token => 401.
+    expect((await app.inject({ method: "GET", url: "/v2/metrics" })).statusCode).toBe(401);
+
+    const conversationId = await createConversation(app);
+    const created = await app.inject({
+      method: "POST",
+      url: `/v2/conversations/${conversationId}/turns`,
+      headers: { ...authorization, "idempotency-key": "metrics-request-1" },
+      payload: { prompt: "review this" }
+    });
+    await waitForCompletion(app, created.json().jobId as string);
+
+    const response = await app.inject({ method: "GET", url: "/v2/metrics", headers: authorization });
+    expect(response.statusCode).toBe(200);
+    const body = response.json();
+    expect(body.jobsByStatus.completed).toBe(1);
+    expect(body.jobsByKind["coding.turn"]).toBe(1);
+    expect(body.queue).toMatchObject({ depth: 0, queued: 0, running: 0 });
+    expect(typeof body.uptimeSeconds).toBe("number");
+    // A bad window is rejected by the schema.
+    expect((await app.inject({ method: "GET", url: "/v2/metrics?windowHours=0", headers: authorization })).statusCode).toBe(400);
+  });
+
   it("returns a stable 400 error for invalid public input", async () => {
     const { app } = await testApp();
     const response = await app.inject({

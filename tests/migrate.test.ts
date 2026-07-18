@@ -122,7 +122,7 @@ describe("V2 to V3 migration", () => {
     const handle = openDatabase(path);
     const raw = new Database(path);
     try {
-      expect(raw.pragma("user_version", { simple: true })).toBe(3);
+      expect(raw.pragma("user_version", { simple: true })).toBe(4);
       // Existing coding job and all of its children survived the table rebuild.
       expect(raw.prepare("SELECT repositoryId, kind FROM jobs WHERE id = 'job1'").get())
         .toEqual({ repositoryId: "gateway", kind: "coding.turn" });
@@ -131,6 +131,11 @@ describe("V2 to V3 migration", () => {
       expect(raw.prepare("SELECT jobId FROM idempotencyRecords WHERE key = 'key1'").get()).toEqual({ jobId: "job1" });
       // No dangling foreign keys after the rebuild.
       expect((raw.pragma("foreign_key_check") as unknown[]).length).toBe(0);
+      // The V3->V4 metrics index is present, and the percentile window query uses it.
+      const plan = raw.prepare(
+        "EXPLAIN QUERY PLAN SELECT completedAt FROM jobs WHERE status = 'completed' AND completedAt >= '2000-01-01'"
+      ).all() as Array<{ detail: string }>;
+      expect(plan.some((row) => row.detail.includes("jobs_completed_idx"))).toBe(true);
       // The relaxed schema now admits a null-repository inference job.
       raw.pragma("foreign_keys = ON");
       raw.prepare(
@@ -156,7 +161,7 @@ describe("V2 to V3 migration", () => {
     const handle = openDatabase(path);
     const raw = new Database(path);
     try {
-      expect(raw.pragma("user_version", { simple: true })).toBe(3);
+      expect(raw.pragma("user_version", { simple: true })).toBe(4);
       // V1->V2 added the column; V2->V3 kept the row and relaxed the schema.
       expect(raw.prepare("SELECT repositoryId, kind, encryptedOutputSchema FROM jobs WHERE id = 'job1'").get())
         .toEqual({ repositoryId: "gateway", kind: "coding.turn", encryptedOutputSchema: null });
@@ -180,7 +185,7 @@ describe("V2 to V3 migration", () => {
     const handle = openDatabase(path);
     const raw = new Database(path);
     try {
-      expect(raw.pragma("user_version", { simple: true })).toBe(3);
+      expect(raw.pragma("user_version", { simple: true })).toBe(4);
       expect(raw.prepare("SELECT COUNT(*) AS n FROM jobs").get()).toEqual({ n: 1 });
     } finally {
       raw.close();

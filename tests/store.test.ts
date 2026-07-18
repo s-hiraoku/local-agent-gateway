@@ -235,6 +235,52 @@ describe("GatewayStore", () => {
     expect(row.updatedAt > stale).toBe(true);
   });
 
+  it("derives a metrics snapshot from persisted job state", async () => {
+    const { store, database } = createStore();
+    const wideWindow = "2000-01-01T00:00:00.000Z";
+    const now = "2100-01-01T00:00:00.000Z";
+
+    // A completed job (with a known 2s duration), a failed job, a cancelled
+    // job, and one still queued.
+    const done = await queuedJobWithKey(store, "metrics-done");
+    await store.claimNextJob();
+    await database.db.updateTable("jobs").set({ startedAt: "2050-01-01T00:00:00.000Z" }).where("id", "=", done.job.id).execute();
+    await store.completeJob(done.job.id, "ok");
+    await database.db.updateTable("jobs").set({ completedAt: "2050-01-01T00:00:02.000Z" }).where("id", "=", done.job.id).execute();
+
+    const failed = await queuedJobWithKey(store, "metrics-failed");
+    await store.claimNextJob();
+    await store.failJob(failed.job.id, "CODEX_RATE_LIMITED", "slow down", true);
+    await database.db.updateTable("jobs").set({ completedAt: now }).where("id", "=", failed.job.id).execute();
+
+    const cancelled = await queuedJobWithKey(store, "metrics-cancelled");
+    await store.requestCancellation("owner", cancelled.job.id);
+    await queuedJobWithKey(store, "metrics-queued");
+
+    const metrics = await store.metrics(wideWindow, now);
+
+    expect(metrics.jobsByStatus).toEqual({ queued: 1, running: 0, completed: 1, failed: 1, cancelled: 1 });
+    expect(metrics.jobsByKind).toEqual({ "coding.turn": 4, "inference.turn": 0 });
+    expect(metrics.queue).toMatchObject({ depth: 1, queued: 1, running: 0 });
+    expect(metrics.queue.oldestQueuedAgeSeconds).toBeGreaterThanOrEqual(0);
+    expect(metrics.window.failuresByErrorCode).toEqual({ CODEX_RATE_LIMITED: 1 });
+    expect(metrics.window.completedDurationSeconds).toMatchObject({ count: 1, p50: 2, p95: 2 });
+  });
+
+  it("excludes rows outside the metrics window", async () => {
+    const { store, database } = createStore();
+    const done = await queuedJobWithKey(store, "metrics-window");
+    await store.claimNextJob();
+    await store.failJob(done.job.id, "CODEX_EXECUTION_FAILED", "boom", false);
+    await database.db.updateTable("jobs").set({ completedAt: "2000-06-01T00:00:00.000Z" }).where("id", "=", done.job.id).execute();
+
+    // Window starts after the failure: it is excluded, but the status count
+    // (which is not windowed) still sees the failed job.
+    const metrics = await store.metrics("2001-01-01T00:00:00.000Z", "2001-01-02T00:00:00.000Z");
+    expect(metrics.jobsByStatus.failed).toBe(1);
+    expect(metrics.window.failuresByErrorCode).toEqual({});
+  });
+
   it("submits an inference run with a null repository and inference kind", async () => {
     const { store } = createStore();
     const submitted = await store.submitInference({

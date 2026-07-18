@@ -1,6 +1,6 @@
 import { sql, type Kysely, type Transaction } from "kysely";
 import { GatewayError } from "../domain/errors.js";
-import type { JobStatus, PublicEvent, PublicJob } from "../domain/jobs.js";
+import type { GatewayMetrics, JobStatus, PublicEvent, PublicJob } from "../domain/jobs.js";
 import { newId } from "../domain/ids.js";
 import type { GatewayDatabase, JobKind, JobRow } from "../infrastructure/database.js";
 import { SecretBox } from "../infrastructure/crypto.js";
@@ -358,6 +358,73 @@ export class GatewayStore {
         conversations: Number(conversations.numDeletedRows)
       };
     });
+  }
+
+  async metrics(windowStart: string, now: string): Promise<GatewayMetrics> {
+    const statuses: JobStatus[] = ["queued", "running", "completed", "failed", "cancelled"];
+    const kinds: Array<"coding.turn" | "inference.turn"> = ["coding.turn", "inference.turn"];
+
+    const statusRows = await this.db.selectFrom("jobs")
+      .select(["status", (eb) => eb.fn.countAll<number>().as("count")])
+      .groupBy("status").execute();
+    const jobsByStatus = Object.fromEntries(statuses.map((s) => [s, 0])) as Record<JobStatus, number>;
+    for (const row of statusRows) jobsByStatus[row.status] = Number(row.count);
+
+    const kindRows = await this.db.selectFrom("jobs")
+      .select(["kind", (eb) => eb.fn.countAll<number>().as("count")])
+      .groupBy("kind").execute();
+    const jobsByKind = Object.fromEntries(kinds.map((k) => [k, 0])) as Record<"coding.turn" | "inference.turn", number>;
+    for (const row of kindRows) jobsByKind[row.kind] = Number(row.count);
+
+    const oldestQueued = await this.db.selectFrom("jobs").select("createdAt")
+      .where("status", "=", "queued").orderBy("createdAt", "asc").limit(1).executeTakeFirst();
+    const oldestQueuedAgeSeconds = oldestQueued
+      ? Math.max(0, Math.round((Date.parse(now) - Date.parse(oldestQueued.createdAt)) / 1000))
+      : null;
+
+    const retried = await this.db.selectFrom("jobs")
+      .select((eb) => eb.fn.countAll<number>().as("count"))
+      .where("attempts", ">", 1).executeTakeFirstOrThrow();
+
+    // Failures within the window, grouped by their (bounded) error code.
+    const failureRows = await this.db.selectFrom("jobs")
+      .select(["errorCode", (eb) => eb.fn.countAll<number>().as("count")])
+      .where("status", "=", "failed").where("completedAt", ">=", windowStart)
+      .where("errorCode", "is not", null).groupBy("errorCode").execute();
+    const failuresByErrorCode: Record<string, number> = {};
+    for (const row of failureRows) if (row.errorCode) failuresByErrorCode[row.errorCode] = Number(row.count);
+
+    // Completed-job durations within the window. Percentiles are computed in
+    // SQL over the (status, completedAt) index so the endpoint never scans an
+    // ever-growing table or pulls rows into memory.
+    const durations = await this.db.selectFrom("jobs")
+      .select(sql<number>`(julianday("completedAt") - julianday("startedAt")) * 86400.0`.as("seconds"))
+      .where("status", "=", "completed").where("completedAt", ">=", windowStart)
+      .where("startedAt", "is not", null).orderBy("seconds", "asc").execute();
+    const seconds = durations.map((row) => Number(row.seconds)).filter((value) => Number.isFinite(value) && value >= 0);
+    const percentile = (fraction: number): number | null => {
+      if (seconds.length === 0) return null;
+      const index = Math.min(seconds.length - 1, Math.ceil(fraction * seconds.length) - 1);
+      return Math.round((seconds[Math.max(0, index)] ?? 0) * 1000) / 1000;
+    };
+
+    return {
+      jobsByStatus,
+      jobsByKind,
+      queue: {
+        depth: jobsByStatus.queued + jobsByStatus.running,
+        queued: jobsByStatus.queued,
+        running: jobsByStatus.running,
+        oldestQueuedAgeSeconds
+      },
+      retriedJobs: Number(retried.count),
+      window: {
+        since: windowStart,
+        failuresByErrorCode,
+        completedDurationSeconds: { count: seconds.length, p50: percentile(0.5), p95: percentile(0.95) }
+      },
+      uptimeSeconds: Math.round(process.uptime())
+    };
   }
 
   async events(ownerId: string, jobId: string, after = 0): Promise<PublicEvent[]> {

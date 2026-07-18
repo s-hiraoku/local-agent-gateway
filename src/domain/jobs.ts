@@ -26,3 +26,22 @@ export type PublicEvent = {
 export function isTerminal(status: JobStatus): boolean {
   return terminalJobStatuses.has(status as "completed" | "failed" | "cancelled");
 }
+
+export type GatewayMetrics = {
+  // Snapshot derived entirely from SQLite, so it is accurate after any restart.
+  jobsByStatus: Record<JobStatus, number>;
+  jobsByKind: Record<"coding.turn" | "inference.turn", number>;
+  queue: {
+    depth: number; // queued + running
+    queued: number;
+    running: number;
+    oldestQueuedAgeSeconds: number | null;
+  };
+  retriedJobs: number; // jobs whose attempts > 1 (Codex flakiness signal)
+  window: {
+    since: string;
+    failuresByErrorCode: Record<string, number>;
+    completedDurationSeconds: { count: number; p50: number | null; p95: number | null };
+  };
+  uptimeSeconds: number;
+};

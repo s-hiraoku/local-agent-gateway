@@ -131,6 +131,19 @@ export async function buildApp(dependencies: AppDependencies): Promise<FastifyIn
     repositories: [...config.repositories.values()].map((repository) => ({ id: repository.id }))
   }));
 
+  app.get("/v2/metrics", {
+    schema: {
+      querystring: Type.Object({
+        windowHours: Type.Optional(Type.Integer({ minimum: 1, maximum: 168 }))
+      })
+    }
+  }, async (request) => {
+    const { windowHours } = request.query as { windowHours?: number };
+    const now = new Date();
+    const windowStart = new Date(now.getTime() - (windowHours ?? 24) * 3_600_000).toISOString();
+    return store.metrics(windowStart, now.toISOString());
+  });
+
   app.post("/v2/conversations", {
     schema: {
       body: Type.Object({ repositoryId: Type.String({ minLength: 1, maxLength: 64 }) }),

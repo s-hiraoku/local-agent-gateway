@@ -158,7 +158,7 @@ export function openDatabase(path: string): DatabaseHandle {
   sqlite.pragma("foreign_keys = ON");
   sqlite.pragma("busy_timeout = 5000");
   const schemaVersion = sqlite.pragma("user_version", { simple: true }) as number;
-  if (schemaVersion > 3) {
+  if (schemaVersion > 4) {
     sqlite.close();
     throw new Error(`Gateway database schema ${schemaVersion} is newer than this binary supports`);
   }
@@ -204,6 +204,7 @@ export function openDatabase(path: string): DatabaseHandle {
     );
     CREATE INDEX IF NOT EXISTS jobs_queue_idx ON jobs(status, createdAt);
     CREATE INDEX IF NOT EXISTS jobs_owner_idx ON jobs(ownerId, createdAt DESC);
+    CREATE INDEX IF NOT EXISTS jobs_completed_idx ON jobs(status, completedAt);
 
     CREATE TABLE IF NOT EXISTS jobEvents (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -235,7 +236,7 @@ export function openDatabase(path: string): DatabaseHandle {
       UNIQUE(jobId, attempt)
     );
 
-    PRAGMA user_version = 3;
+    PRAGMA user_version = 4;
   `);
   }
   if (schemaVersion === 1) {
@@ -253,6 +254,14 @@ export function openDatabase(path: string): DatabaseHandle {
     // block the drop; the rename preserves those ids so the references stay
     // valid. Runs inside a single transaction.
     migrateV2ToV3(sqlite);
+  }
+  if (schemaVersion >= 1 && schemaVersion <= 3) {
+    // V3->V4: add the (status, completedAt) index that backs the metrics
+    // duration-percentile window query. Additive and idempotent.
+    sqlite.exec(`
+      CREATE INDEX IF NOT EXISTS jobs_completed_idx ON jobs(status, completedAt);
+      PRAGMA user_version = 4;
+    `);
   }
   const db = new Kysely<GatewayDatabase>({ dialect: new SqliteDialect({ database: sqlite }) });
   return {
