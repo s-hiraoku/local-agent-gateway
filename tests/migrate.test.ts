@@ -147,7 +147,43 @@ function seedV3(path: string): void {
   sqlite.close();
 }
 
-describe("V2 to V3 migration", () => {
+function seedV4(path: string): void {
+  seedV3(path);
+  const sqlite = new Database(path);
+  sqlite.exec(`
+    CREATE INDEX jobs_completed_idx ON jobs(status, completedAt);
+    PRAGMA user_version = 4;
+  `);
+  sqlite.close();
+}
+
+describe("database migrations", () => {
+  it("adds durable retention metadata when upgrading a pre-existing V4 database", async () => {
+    const path = tempDatabasePath();
+    seedV4(path);
+    const before = new Database(path);
+    expect(before.prepare(
+      "SELECT COUNT(*) AS n FROM sqlite_master WHERE type = 'table' AND name = 'gatewayMetadata'"
+    ).get()).toEqual({ n: 0 });
+    before.close();
+
+    const handle = openDatabase(path);
+    const raw = new Database(path);
+    try {
+      expect(raw.pragma("user_version", { simple: true })).toBe(5);
+      expect(raw.prepare("SELECT * FROM gatewayMetadata").get()).toEqual({
+        id: 1,
+        retentionLastRunAt: null,
+        retentionLastPrunedJobs: 0,
+        retentionLastPrunedConversations: 0
+      });
+      expect(raw.prepare("SELECT COUNT(*) AS n FROM jobs").get()).toEqual({ n: 1 });
+    } finally {
+      raw.close();
+      await handle.close();
+    }
+  });
+
   it("adds the metrics index when upgrading a pre-existing V3 database", async () => {
     const path = tempDatabasePath();
     seedV3(path);
@@ -162,7 +198,7 @@ describe("V2 to V3 migration", () => {
     const handle = openDatabase(path);
     const raw = new Database(path);
     try {
-      expect(raw.pragma("user_version", { simple: true })).toBe(4);
+      expect(raw.pragma("user_version", { simple: true })).toBe(5);
       // The existing row is untouched (index migration is additive).
       expect(raw.prepare("SELECT COUNT(*) AS n FROM jobs").get()).toEqual({ n: 1 });
       const plan = raw.prepare(
@@ -182,7 +218,7 @@ describe("V2 to V3 migration", () => {
     const handle = openDatabase(path);
     const raw = new Database(path);
     try {
-      expect(raw.pragma("user_version", { simple: true })).toBe(4);
+      expect(raw.pragma("user_version", { simple: true })).toBe(5);
       // Existing coding job and all of its children survived the table rebuild.
       expect(raw.prepare("SELECT repositoryId, kind FROM jobs WHERE id = 'job1'").get())
         .toEqual({ repositoryId: "gateway", kind: "coding.turn" });
@@ -221,7 +257,7 @@ describe("V2 to V3 migration", () => {
     const handle = openDatabase(path);
     const raw = new Database(path);
     try {
-      expect(raw.pragma("user_version", { simple: true })).toBe(4);
+      expect(raw.pragma("user_version", { simple: true })).toBe(5);
       // V1->V2 added the column; V2->V3 kept the row and relaxed the schema.
       expect(raw.prepare("SELECT repositoryId, kind, encryptedOutputSchema FROM jobs WHERE id = 'job1'").get())
         .toEqual({ repositoryId: "gateway", kind: "coding.turn", encryptedOutputSchema: null });
@@ -245,7 +281,7 @@ describe("V2 to V3 migration", () => {
     const handle = openDatabase(path);
     const raw = new Database(path);
     try {
-      expect(raw.pragma("user_version", { simple: true })).toBe(4);
+      expect(raw.pragma("user_version", { simple: true })).toBe(5);
       expect(raw.prepare("SELECT COUNT(*) AS n FROM jobs").get()).toEqual({ n: 1 });
     } finally {
       raw.close();

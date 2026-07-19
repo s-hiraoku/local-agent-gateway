@@ -292,3 +292,10 @@ Use this file to record meaningful verification runs.
 - Scope: Metrics review feedback, current-state ledger refresh, readable-root isolation design, and conservative Renovate configuration
 - Result: Passed
 - Notes: Metrics percentiles are ranked inside SQLite and only the p50/p95 rows cross into the application; 3 targeted files/33 tests and the full 10-file/80-test suite passed on Node 26.3.1. Lint, typecheck, build, policy, shell syntax, smoke, and PR #23 CI passed. The current Renovate distribution accepted `renovate.json` in strict validation mode. The VM isolation document is a design and acceptance plan, not evidence that the current LaunchAgent has a readable-root boundary.
+
+### 2026-07-19
+
+- Command: `pnpm exec vitest run tests/migrate.test.ts tests/store.test.ts tests/app.test.ts`; `scripts/verify.sh`; `pnpm smoke`
+- Scope: Durable retention-sweep observability (Issue #24)
+- Result: Passed
+- Notes: Targeted migration, persistence, and API coverage reports 35 passing tests. The full Node 26.3.1 suite reports 10 files/82 tests plus successful lint, typecheck, build, policy, shell syntax, and smoke checks. The latest successful sweep timestamp and deleted job/conversation counts persist in SQLite across restarts, including successful zero-deletion sweeps.

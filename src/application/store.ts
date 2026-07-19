@@ -333,7 +333,7 @@ export class GatewayStore {
     });
   }
 
-  async pruneExpired(cutoff: string): Promise<{ jobs: number; conversations: number }> {
+  async pruneExpired(cutoff: string, runAt = new Date().toISOString()): Promise<{ jobs: number; conversations: number }> {
     return this.db.transaction().execute(async (trx) => {
       // Terminal jobs older than the cutoff. completedAt is set on every
       // terminal transition; createdAt is a defensive fallback so a row can
@@ -353,10 +353,21 @@ export class GatewayStore {
         .where("updatedAt", "<", cutoff)
         .where("id", "not in", trx.selectFrom("jobs").select("conversationId"))
         .executeTakeFirst();
-      return {
+      const pruned = {
         jobs: Number(jobs.numDeletedRows),
         conversations: Number(conversations.numDeletedRows)
       };
+      await trx.insertInto("gatewayMetadata").values({
+        id: 1,
+        retentionLastRunAt: runAt,
+        retentionLastPrunedJobs: pruned.jobs,
+        retentionLastPrunedConversations: pruned.conversations
+      }).onConflict((conflict) => conflict.column("id").doUpdateSet({
+        retentionLastRunAt: runAt,
+        retentionLastPrunedJobs: pruned.jobs,
+        retentionLastPrunedConversations: pruned.conversations
+      })).execute();
+      return pruned;
     });
   }
 
@@ -385,6 +396,7 @@ export class GatewayStore {
     const retried = await this.db.selectFrom("jobs")
       .select((eb) => eb.fn.countAll<number>().as("count"))
       .where("attempts", ">", 1).executeTakeFirstOrThrow();
+    const retention = await this.db.selectFrom("gatewayMetadata").selectAll().where("id", "=", 1).executeTakeFirstOrThrow();
 
     // Failures within the window, grouped by their (bounded) error code.
     const failureRows = await this.db.selectFrom("jobs")
@@ -439,6 +451,13 @@ export class GatewayStore {
         since: windowStart,
         failuresByErrorCode,
         completedDurationSeconds: { count: durationCount, p50: percentile(0.5), p95: percentile(0.95) }
+      },
+      retention: {
+        lastRunAt: retention.retentionLastRunAt,
+        lastPruned: {
+          jobs: retention.retentionLastPrunedJobs,
+          conversations: retention.retentionLastPrunedConversations
+        }
       },
       uptimeSeconds: Math.round(process.uptime())
     };

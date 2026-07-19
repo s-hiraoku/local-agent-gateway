@@ -24,6 +24,7 @@ Native dependency build scripts are denied by pnpm except for the version-locked
 - Prompts, results, and event payloads are AES-256-GCM encrypted in SQLite with record/field context bound as authenticated data.
 - SQLite uses WAL, foreign keys, busy timeout, schema versioning, and mode `0600` for the main database file.
 - Active jobs receive cancellation on graceful shutdown; shutdown waits up to 30 seconds.
+- The latest successful retention-sweep timestamp and deleted-row counts survive Gateway restarts.
 
 Back up the encryption key separately from the database. There is no key rotation workflow yet. Losing the key loses stored payloads; exposing both key and database exposes them.
 
