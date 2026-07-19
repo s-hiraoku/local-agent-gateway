@@ -61,12 +61,20 @@ export type JobAttemptRow = {
   completedAt: string | null;
 };
 
+export type GatewayMetadataRow = {
+  id: number;
+  retentionLastRunAt: string | null;
+  retentionLastPrunedJobs: number;
+  retentionLastPrunedConversations: number;
+};
+
 export type GatewayDatabase = {
   conversations: ConversationRow;
   jobs: JobRow;
   jobEvents: JobEventRow;
   idempotencyRecords: IdempotencyRow;
   jobAttempts: JobAttemptRow;
+  gatewayMetadata: GatewayMetadataRow;
 };
 
 export type DatabaseHandle = {
@@ -158,7 +166,7 @@ export function openDatabase(path: string): DatabaseHandle {
   sqlite.pragma("foreign_keys = ON");
   sqlite.pragma("busy_timeout = 5000");
   const schemaVersion = sqlite.pragma("user_version", { simple: true }) as number;
-  if (schemaVersion > 4) {
+  if (schemaVersion > 5) {
     sqlite.close();
     throw new Error(`Gateway database schema ${schemaVersion} is newer than this binary supports`);
   }
@@ -168,7 +176,7 @@ export function openDatabase(path: string): DatabaseHandle {
     ).all() as Array<{ name: string }>;
     if (existingTables.length > 0) {
       sqlite.close();
-      throw new Error("Refusing to open an unversioned or V1 database as a V3 database");
+      throw new Error("Refusing to open an unversioned database as a V5 database");
     }
     sqlite.exec(`
     CREATE TABLE IF NOT EXISTS conversations (
@@ -236,7 +244,17 @@ export function openDatabase(path: string): DatabaseHandle {
       UNIQUE(jobId, attempt)
     );
 
-    PRAGMA user_version = 4;
+    CREATE TABLE IF NOT EXISTS gatewayMetadata (
+      id INTEGER PRIMARY KEY CHECK (id = 1),
+      retentionLastRunAt TEXT,
+      retentionLastPrunedJobs INTEGER NOT NULL DEFAULT 0 CHECK (retentionLastPrunedJobs >= 0),
+      retentionLastPrunedConversations INTEGER NOT NULL DEFAULT 0 CHECK (retentionLastPrunedConversations >= 0)
+    );
+    INSERT OR IGNORE INTO gatewayMetadata (
+      id, retentionLastRunAt, retentionLastPrunedJobs, retentionLastPrunedConversations
+    ) VALUES (1, NULL, 0, 0);
+
+    PRAGMA user_version = 5;
   `);
   }
   if (schemaVersion === 1) {
@@ -261,6 +279,22 @@ export function openDatabase(path: string): DatabaseHandle {
     sqlite.exec(`
       CREATE INDEX IF NOT EXISTS jobs_completed_idx ON jobs(status, completedAt);
       PRAGMA user_version = 4;
+    `);
+  }
+  if (schemaVersion >= 1 && schemaVersion <= 4) {
+    // V4->V5: persist the latest successful retention-sweep result so
+    // operational metrics remain truthful across Gateway restarts.
+    sqlite.exec(`
+      CREATE TABLE IF NOT EXISTS gatewayMetadata (
+        id INTEGER PRIMARY KEY CHECK (id = 1),
+        retentionLastRunAt TEXT,
+        retentionLastPrunedJobs INTEGER NOT NULL DEFAULT 0 CHECK (retentionLastPrunedJobs >= 0),
+        retentionLastPrunedConversations INTEGER NOT NULL DEFAULT 0 CHECK (retentionLastPrunedConversations >= 0)
+      );
+      INSERT OR IGNORE INTO gatewayMetadata (
+        id, retentionLastRunAt, retentionLastPrunedJobs, retentionLastPrunedConversations
+      ) VALUES (1, NULL, 0, 0);
+      PRAGMA user_version = 5;
     `);
   }
   const db = new Kysely<GatewayDatabase>({ dialect: new SqliteDialect({ database: sqlite }) });

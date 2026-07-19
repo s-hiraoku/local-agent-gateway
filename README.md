@@ -17,6 +17,7 @@ Implemented:
 - bounded queue, concurrency, result, event, stderr, RPC, and turn handling;
 - parallel conversations with strict in-order execution inside each conversation;
 - reconnectable Server-Sent Events;
+- authenticated, restart-durable operational metrics;
 - one isolated App Server process per job with an environment allowlist;
 - graceful cancellation and shutdown;
 - OpenAPI documentation at `/docs`.
@@ -96,7 +97,7 @@ Important optional variables:
 | `CODEXGW_RETENTION_DAYS` | `14` |
 | `CODEXGW_INFERENCE_WORKSPACE_ROOT` | `~/.codex-gateway-inference` |
 
-An hourly retention sweep deletes terminal jobs (with their events, attempts, and idempotency records) older than `CODEXGW_RETENTION_DAYS`, plus conversations that no longer have jobs and have not been touched within the window. Queued and running jobs are never touched. Two consequences to know: reusing an `Idempotency-Key` after its record is pruned re-executes the request instead of replaying the stored job, and the SQLite file does not shrink on disk — freed pages are reused by new writes.
+An hourly retention sweep deletes terminal jobs (with their events, attempts, and idempotency records) older than `CODEXGW_RETENTION_DAYS`, plus conversations that no longer have jobs and have not been touched within the window. Queued and running jobs are never touched. The latest successful sweep time and deleted job/conversation counts are persisted atomically and exposed through the metrics endpoint. Two consequences to know: reusing an `Idempotency-Key` after its record is pruned re-executes the request instead of replaying the stored job, and the SQLite file does not shrink on disk — freed pages are reused by new writes.
 
 Copy [.env.example](.env.example) as a local reference, then start the service through your secret manager or service definition:
 
@@ -192,7 +193,7 @@ curl -H "Authorization: Bearer $CODEXGW_API_TOKEN" \
   'http://127.0.0.1:8787/v2/metrics?windowHours=24'
 ```
 
-It reports job counts by status and by kind, queue depth and the oldest queued job's age, the number of retried jobs (a Codex-flakiness signal), and — over a window (default 24h, 1–168) — failures grouped by error code and completed-job duration percentiles (p50/p95). The percentile query is backed by a `(status, completedAt)` index. `windowHours` bounds both the query cost and the freshness of the latency figures.
+It reports job counts by status and by kind, queue depth and the oldest queued job's age, the number of retried jobs (a Codex-flakiness signal), and — over a window (default 24h, 1–168) — failures grouped by error code and completed-job duration percentiles (p50/p95). `retention.lastRunAt` and `retention.lastPruned` report the latest successful retention sweep across restarts; before any sweep completes they are `null` and zero counts. The percentile query is backed by a `(status, completedAt)` index. `windowHours` bounds both the query cost and the freshness of the latency figures.
 
 ## Security boundary
 

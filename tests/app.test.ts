@@ -97,6 +97,8 @@ describe("V2 API", () => {
     expect(body.jobsByStatus.completed).toBe(1);
     expect(body.jobsByKind["coding.turn"]).toBe(1);
     expect(body.queue).toMatchObject({ depth: 0, queued: 0, running: 0 });
+    expect(body.retention.lastPruned).toEqual({ jobs: 0, conversations: 0 });
+    expect(new Date(body.retention.lastRunAt as string).toISOString()).toBe(body.retention.lastRunAt);
     expect(typeof body.uptimeSeconds).toBe("number");
     // A bad window is rejected by the schema.
     expect((await app.inject({ method: "GET", url: "/v2/metrics?windowHours=0", headers: authorization })).statusCode).toBe(400);

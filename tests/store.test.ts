@@ -159,6 +159,30 @@ describe("GatewayStore", () => {
     }
   });
 
+  it("persists the latest successful retention sweep across database restarts", async () => {
+    const directory = mkdtempSync(join(tmpdir(), "codexgw-retention-metrics-"));
+    temporaryDirectories.push(directory);
+    const path = join(directory, "gateway.sqlite");
+    const key = Buffer.alloc(32, 9);
+    const runAt = "2050-01-02T03:04:05.000Z";
+    const firstDatabase = openDatabase(path);
+    const firstStore = new GatewayStore(firstDatabase.db, new SecretBox(key));
+    const submitted = await queuedJob(firstStore);
+    await firstStore.claimNextJob();
+    await firstStore.completeJob(submitted.job.id, "ok");
+    expect(await firstStore.pruneExpired(futureCutoff, runAt)).toEqual({ jobs: 1, conversations: 1 });
+    await firstDatabase.close();
+
+    const reopened = openDatabase(path);
+    databases.push(reopened);
+    const reopenedStore = new GatewayStore(reopened.db, new SecretBox(key));
+    const metrics = await reopenedStore.metrics("2000-01-01T00:00:00.000Z", "2050-01-03T00:00:00.000Z");
+    expect(metrics.retention).toEqual({
+      lastRunAt: runAt,
+      lastPruned: { jobs: 1, conversations: 1 }
+    });
+  });
+
   it("prunes failed and cancelled jobs too", async () => {
     const { store } = createStore();
     const failing = await queuedJobWithKey(store, "retention-fail");
@@ -265,6 +289,10 @@ describe("GatewayStore", () => {
     expect(metrics.queue.oldestQueuedAgeSeconds).toBeGreaterThanOrEqual(0);
     expect(metrics.window.failuresByErrorCode).toEqual({ CODEX_RATE_LIMITED: 1 });
     expect(metrics.window.completedDurationSeconds).toMatchObject({ count: 1, p50: 2, p95: 2 });
+    expect(metrics.retention).toEqual({
+      lastRunAt: null,
+      lastPruned: { jobs: 0, conversations: 0 }
+    });
   });
 
   it("excludes rows outside the metrics window", async () => {

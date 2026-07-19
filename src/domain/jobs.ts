@@ -43,5 +43,9 @@ export type GatewayMetrics = {
     failuresByErrorCode: Record<string, number>;
     completedDurationSeconds: { count: number; p50: number | null; p95: number | null };
   };
+  retention: {
+    lastRunAt: string | null;
+    lastPruned: { jobs: number; conversations: number };
+  };
   uptimeSeconds: number;
 };
