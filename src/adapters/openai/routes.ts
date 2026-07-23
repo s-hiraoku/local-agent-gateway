@@ -91,35 +91,57 @@ export async function registerOpenAIResponsesRoutes(
       throw new GatewayError("INVALID_REQUEST", "Idempotency-Key must contain 8 to 128 characters", 400);
     }
 
-    const submitted = await store.submitInference({
-      ownerId: request.principalId,
-      prompt,
-      idempotencyKey,
-      requestHash: secrets.digest(canonicalJson({
-        version: 1,
-        capability: "openai.responses",
-        model: body.model,
-        input: body.input,
-        instructions: body.instructions ?? null
-      })),
-      maxQueuedJobs: config.maxQueuedJobs
-    });
-    processor.wake();
-
-    if (body.stream) {
-      await streamResponse(request.principalId, submitted.job, body, mayCancelJob, dependencies, secrets, reply);
-      return;
-    }
-
     let disconnected = false;
+    let submittedJobId: string | undefined;
+    let cancellation: Promise<void> | undefined;
+    const cancelSubmittedJob = (): Promise<void> => {
+      if (!mayCancelJob || !submittedJobId) return Promise.resolve();
+      cancellation ??= processor.cancel(request.principalId, submittedJobId).catch(() => undefined);
+      return cancellation;
+    };
     const cancelOnClose = () => {
       disconnected = true;
       if (mayCancelJob && !reply.raw.writableEnded) {
-        void processor.cancel(request.principalId, submitted.job.id).catch(() => undefined);
+        void cancelSubmittedJob();
       }
     };
     reply.raw.once("close", cancelOnClose);
     try {
+      const submitted = await store.submitInference({
+        ownerId: request.principalId,
+        prompt,
+        idempotencyKey,
+        requestHash: secrets.digest(canonicalJson({
+          version: 1,
+          capability: "openai.responses",
+          model: body.model,
+          input: body.input,
+          instructions: body.instructions ?? null
+        })),
+        maxQueuedJobs: config.maxQueuedJobs
+      });
+      submittedJobId = submitted.job.id;
+      if (disconnected) {
+        if (mayCancelJob) await cancelSubmittedJob();
+        else processor.wake();
+        throw disconnectedStreamError();
+      }
+      processor.wake();
+
+      if (body.stream) {
+        await streamResponse(
+          request.principalId,
+          submitted.job,
+          body,
+          mayCancelJob,
+          () => disconnected,
+          dependencies,
+          secrets,
+          reply
+        );
+        return;
+      }
+
       const job = await waitForTerminalJob(
         request.principalId,
         submitted.job.id,
@@ -164,18 +186,12 @@ async function streamResponse(
   initialJob: PublicJob,
   request: OpenAIResponseRequest,
   mayCancelJob: boolean,
+  disconnected: () => boolean,
   dependencies: OpenAIRouteDependencies,
   secrets: SecretBox,
   reply: FastifyReply
 ): Promise<void> {
   const { config, store, processor } = dependencies;
-  let disconnected = false;
-  let finished = false;
-  const cancelOnClose = () => {
-    disconnected = true;
-    if (mayCancelJob && !finished) void processor.cancel(ownerId, initialJob.id).catch(() => undefined);
-  };
-  reply.raw.once("close", cancelOnClose);
   reply.hijack();
   reply.raw.writeHead(200, {
     "content-type": "text/event-stream; charset=utf-8",
@@ -210,7 +226,7 @@ async function streamResponse(
   const cancellationGraceMs = Math.min(config.rpcTimeoutMs, 5_000);
   let cursor = 0;
   let cancellationDeadline: number | undefined;
-  while (!disconnected) {
+  while (!disconnected()) {
     cursor = await drainAvailableDeltas(store, ownerId, initialJob.id, cursor, messageId, reply.raw);
 
     const job = await store.getJob(ownerId, initialJob.id);
@@ -224,7 +240,6 @@ async function streamResponse(
         await writeEvent(reply.raw, "response.failed", {
           type: "response.failed", response: responseObject(asTimeoutJob(job), request, "failed", secrets)
         });
-        finished = true;
         reply.raw.end();
         return;
       }
@@ -241,7 +256,6 @@ async function streamResponse(
       await writeEvent(reply.raw, "response.failed", {
         type: "response.failed", response: responseObject(asTimeoutJob(job), request, "failed", secrets)
       });
-      finished = true;
       reply.raw.end();
       return;
     }
@@ -275,7 +289,6 @@ async function streamResponse(
         type: "response.failed", response: responseObject(job, request, "failed", secrets)
       });
     }
-    finished = true;
     reply.raw.end();
     return;
   }

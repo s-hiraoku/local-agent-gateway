@@ -319,6 +319,44 @@ describe("OpenAI Responses compatibility", () => {
     }).toBe("cancelled");
   });
 
+  it("records a disconnect that happens before anonymous job submission completes", async () => {
+    const runner: CodingRunner = {
+      async run() {
+        await new Promise((resolve) => setTimeout(resolve, 200));
+        return { backendThreadId: "private-thread", result: "hello" };
+      }
+    };
+    const { app, database, store } = await testApp(runner);
+    const originalSubmit = store.submitInference.bind(store);
+    let markSubmitting: (() => void) | undefined;
+    let releaseSubmit: (() => void) | undefined;
+    const submitting = new Promise<void>((resolve) => { markSubmitting = resolve; });
+    const release = new Promise<void>((resolve) => { releaseSubmit = resolve; });
+    vi.spyOn(store, "submitInference").mockImplementationOnce(async (input) => {
+      markSubmitting?.();
+      await release;
+      return originalSubmit(input);
+    });
+    await app.listen({ host: "127.0.0.1", port: 0 });
+    const address = app.server.address();
+    if (!address || typeof address === "string") throw new Error("test server did not expose a TCP address");
+    const controller = new AbortController();
+    const pending = fetch(`http://127.0.0.1:${address.port}/v1/responses`, {
+      method: "POST",
+      headers: { ...authorization, "content-type": "application/json" },
+      body: JSON.stringify({ model: "codex-subscription", input: "hello" }),
+      signal: controller.signal
+    });
+    await submitting;
+    controller.abort();
+    releaseSubmit?.();
+    await expect(pending).rejects.toThrow();
+    await expect.poll(async () => {
+      const job = await database.db.selectFrom("jobs").select("status").executeTakeFirst();
+      return job?.status;
+    }).toBe("cancelled");
+  });
+
   it("does not cancel an explicitly idempotent job when one waiter disconnects", async () => {
     let markStarted: (() => void) | undefined;
     let finishRun: (() => void) | undefined;
