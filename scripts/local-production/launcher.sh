@@ -27,6 +27,13 @@ CODEX_HOME="$(/bin/cat "${CONFIG}/codex-home")"
 [[ "$(/usr/bin/stat -f '%Lp' "${CODEX_HOME}")" == "700" ]] || fail "dedicated Codex home must have mode 0700"
 [[ ! -e "${CODEX_HOME}/config.toml" ]] || fail "dedicated Codex home must not contain config.toml"
 
+OPENAI_COMPATIBILITY="false"
+if [[ -f "${CONFIG}/openai-compatibility" ]]; then
+  OPENAI_COMPATIBILITY="$(/bin/cat "${CONFIG}/openai-compatibility")"
+fi
+[[ "${OPENAI_COMPATIBILITY}" == "true" || "${OPENAI_COMPATIBILITY}" == "false" ]] \
+  || fail "OpenAI compatibility configuration must be true or false"
+
 API_TOKEN="$(/usr/bin/security find-generic-password -a "${ACCOUNT}" -s "${LABEL}.api-token" -w)" \
   || fail "API token could not be read from the login Keychain"
 ENCRYPTION_KEY="$(/usr/bin/security find-generic-password -a "${ACCOUNT}" -s "${LABEL}.encryption-key" -w)" \
@@ -40,6 +47,7 @@ export CODEXGW_DATA_ENCRYPTION_KEY="${ENCRYPTION_KEY}"
 export CODEXGW_REPOSITORIES_JSON="$(/bin/cat "${CONFIG}/repositories.json")"
 export CODEXGW_CODEX_COMMAND="${CODEX_COMMAND}"
 export CODEXGW_CODEX_HOME="${CODEX_HOME}"
+export CODEXGW_OPENAI_COMPATIBILITY_ENABLED="${OPENAI_COMPATIBILITY}"
 export LOG_LEVEL="info"
 export PATH="$(/usr/bin/dirname "${CODEX_COMMAND}"):${RELEASE}/runtime:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin"
 

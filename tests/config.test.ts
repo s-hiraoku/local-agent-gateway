@@ -34,6 +34,28 @@ describe("loadConfig", () => {
     expect(config.repositories.size).toBe(0);
   });
 
+  it("keeps OpenAI compatibility opt-in and loopback-only", () => {
+    expect(loadConfig(validEnv()).openaiCompatibilityEnabled).toBe(false);
+    expect(loadConfig({
+      ...validEnv(),
+      CODEXGW_OPENAI_COMPATIBILITY_ENABLED: "true"
+    }).openaiCompatibilityEnabled).toBe(true);
+    expect(loadConfig({
+      ...validEnv(),
+      CODEXGW_OPENAI_COMPATIBILITY_ENABLED: "true",
+      CODEXGW_HOST: "::1"
+    }).openaiCompatibilityEnabled).toBe(true);
+    expect(() => loadConfig({
+      ...validEnv(),
+      CODEXGW_OPENAI_COMPATIBILITY_ENABLED: "true",
+      CODEXGW_HOST: "0.0.0.0"
+    })).toThrow(/loopback/);
+    expect(() => loadConfig({
+      ...validEnv(),
+      CODEXGW_OPENAI_COMPATIBILITY_ENABLED: "yes"
+    })).toThrow(/true or false/);
+  });
+
   it("still requires CODEXGW_REPOSITORIES_JSON to be present and an array", () => {
     const { CODEXGW_REPOSITORIES_JSON: _omitted, ...withoutRepos } = validEnv();
     void _omitted;

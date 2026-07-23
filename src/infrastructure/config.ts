@@ -19,6 +19,7 @@ export type GatewayConfig = {
   codexHome: string;
   inferenceWorkspaceRoot: string;
   codexModel?: string;
+  openaiCompatibilityEnabled: boolean;
   maxQueuedJobs: number;
   maxConcurrentJobs: number;
   maxPromptBytes: number;
@@ -36,6 +37,17 @@ function positiveInteger(value: string | undefined, fallback: number, name: stri
     throw new GatewayError("INVALID_REQUEST", `${name} must be a positive integer`, 500);
   }
   return parsed;
+}
+
+function booleanFlag(value: string | undefined, fallback: boolean, name: string): boolean {
+  if (value === undefined) return fallback;
+  if (value === "true") return true;
+  if (value === "false") return false;
+  throw new GatewayError("INVALID_REQUEST", `${name} must be true or false`, 500);
+}
+
+function isLoopbackHost(host: string): boolean {
+  return host === "127.0.0.1" || host === "::1" || host === "localhost";
 }
 
 function parseRepositories(raw: string | undefined): ReadonlyMap<string, RepositoryTarget> {
@@ -110,8 +122,21 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): GatewayConfig 
   if (!isAbsolute(inferenceWorkspaceRoot)) {
     throw new GatewayError("INVALID_REQUEST", "CODEXGW_INFERENCE_WORKSPACE_ROOT must be an absolute path", 500);
   }
+  const host = env.CODEXGW_HOST ?? "127.0.0.1";
+  const openaiCompatibilityEnabled = booleanFlag(
+    env.CODEXGW_OPENAI_COMPATIBILITY_ENABLED,
+    false,
+    "CODEXGW_OPENAI_COMPATIBILITY_ENABLED"
+  );
+  if (openaiCompatibilityEnabled && !isLoopbackHost(host)) {
+    throw new GatewayError(
+      "INVALID_REQUEST",
+      "OpenAI compatibility may only be enabled on a loopback host",
+      500
+    );
+  }
   return {
-    host: env.CODEXGW_HOST ?? "127.0.0.1",
+    host,
     port: positiveInteger(env.CODEXGW_PORT, 8787, "CODEXGW_PORT"),
     databasePath: env.CODEXGW_DATABASE_PATH ?? join(process.cwd(), "data", "gateway-v2.sqlite"),
     apiToken,
@@ -121,6 +146,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): GatewayConfig 
     codexHome,
     inferenceWorkspaceRoot,
     ...(model ? { codexModel: model } : {}),
+    openaiCompatibilityEnabled,
     maxQueuedJobs: positiveInteger(env.CODEXGW_MAX_QUEUED_JOBS, 100, "CODEXGW_MAX_QUEUED_JOBS"),
     maxConcurrentJobs: positiveInteger(env.CODEXGW_MAX_CONCURRENT_JOBS, 2, "CODEXGW_MAX_CONCURRENT_JOBS"),
     maxPromptBytes: positiveInteger(env.CODEXGW_MAX_PROMPT_BYTES, 64 * 1024, "CODEXGW_MAX_PROMPT_BYTES"),

@@ -41,6 +41,14 @@ pnpm local:install -- --repositories-json '[
 ]'
 ```
 
+To enable the loopback-only OpenAI Responses compatibility subset for trusted local clients, add:
+
+```bash
+pnpm local:install -- --openai-compatibility true
+```
+
+The setting is persisted in the versioned release configuration. Pass `--openai-compatibility false` on a later installation to disable it. See [OpenAI Responses compatibility](OPENAI_RESPONSES_COMPATIBILITY.md) before enabling it.
+
 The installer runs the full verification suite, builds JavaScript, creates a
 versioned release, installs production-only dependencies, and starts a user
 LaunchAgent. It refuses a dirty Git worktree and does not run production from
@@ -55,7 +63,7 @@ Runtime files live under:
   current -> releases/<timestamp>-<commit>
   releases/<timestamp>-<commit>/
     bin/{launcher.sh,gatewayctl}
-    config/{repositories.json,codex-command,codex-home}
+    config/{repositories.json,codex-command,codex-home,openai-compatibility}
     dist/
     runtime/
   data/gateway-v2.sqlite

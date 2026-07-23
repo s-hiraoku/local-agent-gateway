@@ -343,6 +343,16 @@ async function install(): Promise<void> {
     ? readFileSync(existingRegistryPath, "utf8")
     : JSON.stringify([{ id: "reviews", path: reviewsDirectory }]));
   const repositories = canonicalizeRepositoryRegistry(rawRegistry);
+  const versionedCompatibilityPath = join(base, "current", "config", "openai-compatibility");
+  const legacyCompatibilityPath = join(base, "config", "openai-compatibility");
+  const existingCompatibilityPath = existsSync(versionedCompatibilityPath)
+    ? versionedCompatibilityPath
+    : legacyCompatibilityPath;
+  const openaiCompatibility = option("--openai-compatibility")
+    ?? (existsSync(existingCompatibilityPath) ? readFileSync(existingCompatibilityPath, "utf8").trim() : "false");
+  if (openaiCompatibility !== "true" && openaiCompatibility !== "false") {
+    throw new Error("--openai-compatibility must be true or false");
+  }
 
   const worktreeStatus = execFileSync("/usr/bin/git", ["status", "--porcelain"], {
     cwd: projectRoot,
@@ -395,6 +405,7 @@ async function install(): Promise<void> {
     writePrivate(join(releaseConfig, "repositories.json"), `${JSON.stringify(repositories, null, 2)}\n`);
     writePrivate(join(releaseConfig, "codex-command"), `${codexCommand}\n`);
     writePrivate(join(releaseConfig, "codex-home"), `${codexHome}\n`);
+    writePrivate(join(releaseConfig, "openai-compatibility"), `${openaiCompatibility}\n`);
     writePrivate(join(staging, ".pending-activation"), "");
     renameSync(staging, release);
   } catch (error) {
@@ -446,7 +457,7 @@ const entrypoint = process.argv[1] ? realpathSync(process.argv[1]) : "";
 if (entrypoint === fileURLToPath(import.meta.url)) {
   const command = process.argv[2];
   if (command !== "install") {
-    console.error("usage: pnpm local:install -- [--repositories-json JSON] [--codex-home PATH]");
+    console.error("usage: pnpm local:install -- [--repositories-json JSON] [--codex-home PATH] [--openai-compatibility true|false]");
     process.exitCode = 2;
   } else {
     install().catch((error: unknown) => {

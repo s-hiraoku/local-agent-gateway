@@ -23,6 +23,7 @@ V2 currently protects a private, single-owner Gateway used by trusted external a
 - prompts, results, and event data are authenticated-encrypted at rest;
 - idempotency and bounded resources reduce accidental or deliberate quota exhaustion;
 - App Server requests for approval or interactive tools are rejected.
+- OpenAI compatibility is disabled by default, loopback-only when enabled, authenticated with the Gateway token, and restricted to a server-fixed model alias and text fields.
 
 ## Critical unresolved boundary
 
@@ -31,6 +32,8 @@ Read-only controls mutation; it does not prove that the model's file-reading cap
 Production use therefore requires a separately verified execution boundary that limits readable roots, such as a dedicated OS account plus a container, VM, or platform sandbox exposing only the selected repository and the minimum runtime files. The dedicated `CODEX_HOME` authentication mechanism must be tested within that boundary without copying plaintext credentials.
 
 Output filtering is not an acceptable substitute because secrets can be transformed before output.
+
+The optional Responses compatibility interface increases the value of a stolen Gateway token because it grants subscription-backed inference without the `/v2` job workflow. It remains inside the same trusted-owner boundary: enabling it for untrusted clients or prompts is prohibited until readable-root isolation is implemented and verified.
 
 The selected target and its required denial tests are specified in [Readable-root isolation design](READABLE_ROOT_ISOLATION.md). That document is a migration design, not evidence that the current LaunchAgent is isolated.
 

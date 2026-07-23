@@ -18,6 +18,7 @@ Implemented:
 - parallel conversations with strict in-order execution inside each conversation;
 - reconnectable Server-Sent Events;
 - authenticated, restart-durable operational metrics;
+- opt-in, loopback-only OpenAI Responses compatibility for trusted text clients;
 - one isolated App Server process per job with an environment allowlist;
 - graceful cancellation and shutdown;
 - OpenAPI documentation at `/docs`.
@@ -25,7 +26,7 @@ Implemented:
 Not implemented yet:
 
 - write-capable worktrees and patch artifacts;
-- image, audio, realtime, or general Responses API adapters;
+- image, audio, realtime, or general OpenAI Platform Responses API adapters;
 - multi-user identity or token administration;
 - Codex account login endpoints and usage reporting;
 - an OS-level readable-root boundary around Codex;
@@ -86,6 +87,7 @@ Important optional variables:
 | `CODEXGW_CODEX_COMMAND` | `codex` |
 | `CODEXGW_CODEX_HOME` | `~/.codex-gateway` |
 | `CODEXGW_CODEX_MODEL` | Codex account/config default |
+| `CODEXGW_OPENAI_COMPATIBILITY_ENABLED` | `false`; enables the loopback-only text Responses subset |
 | `CODEXGW_MAX_QUEUED_JOBS` | `100` |
 | `CODEXGW_MAX_CONCURRENT_JOBS` | `2` |
 | `CODEXGW_MAX_PROMPT_BYTES` | `65536` |
@@ -155,6 +157,28 @@ curl -X POST http://127.0.0.1:8787/v2/inference/runs \
 
 Inference jobs poll and read `structuredOutput` exactly like coding runs (`kind` is `inference.turn`, `repositoryId` is `null`).
 
+For trusted OpenAI SDK clients on the same host, the optional compatibility surface exposes `GET /v1/models` and `POST /v1/responses`. Enable it only while binding to loopback:
+
+```bash
+CODEXGW_OPENAI_COMPATIBILITY_ENABLED=true pnpm dev
+```
+
+```js
+import OpenAI from "openai";
+
+const client = new OpenAI({
+  apiKey: process.env.CODEXGW_API_TOKEN,
+  baseURL: "http://127.0.0.1:8787/v1"
+});
+
+const response = await client.responses.create({
+  model: "codex-subscription",
+  input: "Summarize this text: ..."
+});
+```
+
+This is a strict text-only compatibility subset backed by the Codex subscription, not an OpenAI Platform API replacement. Unsupported fields are rejected. See [OpenAI Responses compatibility](docs/OPENAI_RESPONSES_COMPATIBILITY.md).
+
 Create a conversation:
 
 ```bash
@@ -198,5 +222,7 @@ It reports job counts by status and by kind, queue depth and the oldest queued j
 ## Security boundary
 
 Gateway credentials and backend credentials are separate. Clients submit only Gateway bearer tokens. App Server inherits a small environment allowlist and a dedicated `CODEX_HOME`; OpenAI API keys are not accepted by public request bodies.
+
+The optional `/v1` compatibility routes use the same Gateway bearer token. They do not expose OAuth endpoints or OAuth tokens, and cannot be enabled on a non-loopback bind address.
 
 `read-only` prevents writes and, with `approvalPolicy: never`, rejects interactive escalation. It is not by itself proof that Codex cannot read host files outside the repository. Until an OS-level readable-root boundary is implemented and tested, run this only as a dedicated local service account against trusted repositories and trusted client applications. Do not expose the port directly to the public internet.

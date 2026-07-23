@@ -1,6 +1,6 @@
 # V2 Architecture
 
-Local Agent Gateway is a private capability gateway for trusted applications, not a generic proxy for Codex App Server or the OpenAI API. V2 is a clean rewrite with a breaking `/v2` API.
+Local Agent Gateway is a private capability gateway for trusted applications, not a generic proxy for Codex App Server or the OpenAI API. V2 is a clean rewrite with a breaking `/v2` API. An explicit, disabled-by-default `/v1/responses` adapter provides a narrow OpenAI SDK text interface without exposing upstream protocols or credentials.
 
 ```text
 trusted external app
@@ -16,7 +16,7 @@ Local Agent Gateway
         `-- audio  -> OpenAI Platform API -> project billing (planned)
 ```
 
-Clients authenticate only to the Gateway. Backend credentials, billing domains, protocols, and policy remain explicit per capability. ChatGPT/Codex subscription access is not presented as a replacement for the OpenAI Platform API.
+Clients authenticate only to the Gateway. Backend credentials, billing domains, protocols, and policy remain explicit per capability. ChatGPT/Codex subscription access is not presented as a replacement for the OpenAI Platform API. The compatibility adapter translates only allowlisted text fields and constructs new response events; it does not forward raw OpenAI or App Server traffic.
 
 ## Layering
 
@@ -62,6 +62,10 @@ GET  /v2/jobs/:id/events
 POST /v2/jobs/:id/cancel
 GET  /v2/metrics
 
+# optional trusted-local compatibility facade
+GET  /v1/models
+POST /v1/responses
+
 # planned
 POST /v2/images/generations
 POST /v2/images/edits
@@ -70,7 +74,7 @@ POST /v2/audio/speech
 GET  /v2/artifacts/:id
 ```
 
-Never add a generic `/openai/*`, arbitrary upstream URL, raw request forwarding, generic App Server JSON-RPC endpoint, raw filesystem API, or client-selected executable.
+Never add an arbitrary upstream URL, raw request forwarding, generic App Server JSON-RPC endpoint, raw filesystem API, or client-selected executable. Compatibility endpoints must remain capability-specific, strictly validated, and disabled by default.
 
 ## Persistence
 

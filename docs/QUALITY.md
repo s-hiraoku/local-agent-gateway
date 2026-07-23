@@ -47,6 +47,7 @@ CI repeats clean installation, lint, typecheck, tests, build, and harness verifi
 - Startup rejects a dedicated home containing `config.toml`; App Server receives an explicit environment allowlist.
 - Cancellation, shutdown, crash recovery, SSE replay, retention, encrypted restart recovery, backup, rollback, and idempotent replay have automated or recorded live verification.
 - The versioned macOS deployment binds to `127.0.0.1`, keeps bearer authentication enabled, and stores runtime secrets in the login Keychain.
+- The optional Responses compatibility surface has exact-field rejection tests and is parsed end to end by the official OpenAI JavaScript SDK in synchronous and SSE modes.
 
 ## Remaining gates before untrusted external use
 
