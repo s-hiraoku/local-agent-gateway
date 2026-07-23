@@ -2,6 +2,8 @@
 
 V2 is a breaking replacement for the old `/v1/tasks` API. Clients use Gateway coding runs, conversations, and jobs; they never send repository paths, Codex IDs, backend credentials, model-provider requests, or raw JSON-RPC payloads.
 
+The separately versioned, optional `/v1/models` and `/v1/responses` routes are an OpenAI SDK compatibility namespace, not a revival of the old Gateway V1 task API. Their strict text-only contract is documented in [OpenAI Responses compatibility](OPENAI_RESPONSES_COMPATIBILITY.md).
+
 ## Stateless structured runs
 
 Clients that need one independent result, including Decision-Agent, should use `POST /v2/coding/runs`. The request requires `repositoryId`, `prompt`, `Idempotency-Key`, and may include `outputSchema`. Conversation creation and job submission are atomic, and the response returns both `jobId` and the internal `conversationId`.

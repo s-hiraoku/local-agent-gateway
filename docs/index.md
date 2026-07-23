@@ -12,6 +12,7 @@ The current vertical slice implements subscription-backed, read-only coding and 
 - [Client integration](CLIENT_INTEGRATION.md): V2 API workflow and retry contract.
 - [Event streaming](EVENT_STREAMING.md): SSE event format and reconnect behavior.
 - [Quality and operations](QUALITY.md): supported runtime, verification, execution guarantees, and release gates.
+- [OpenAI Responses compatibility](OPENAI_RESPONSES_COMPATIBILITY.md): opt-in subscription-backed text interface, authentication boundary, SSE contract, unsupported fields, and release gates.
 
 The public surface is intentionally small:
 
@@ -28,6 +29,10 @@ GET  /v2/jobs/:id
 GET  /v2/jobs/:id/events
 POST /v2/jobs/:id/cancel
 GET  /v2/metrics
+
+# only when CODEXGW_OPENAI_COMPATIBILITY_ENABLED=true
+GET  /v1/models
+POST /v1/responses
 ```
 
 OpenAPI documentation is served from `/docs` by a running Gateway.

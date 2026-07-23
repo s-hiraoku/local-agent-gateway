@@ -12,6 +12,8 @@ import { secureTokenEqual, SecretBox } from "./infrastructure/crypto.js";
 import { GatewayStore } from "./application/store.js";
 import { JobProcessor, requireRepository } from "./application/job-processor.js";
 import { canonicalJson, validateOutputSchema, type OutputSchema } from "./domain/structured-output.js";
+import { registerOpenAIResponsesRoutes } from "./adapters/openai/routes.js";
+import { openAIErrorEnvelope } from "./adapters/openai/responses.js";
 
 declare module "fastify" {
   interface FastifyRequest {
@@ -64,7 +66,9 @@ export async function buildApp(dependencies: AppDependencies): Promise<FastifyIn
   await app.register(swaggerUi, { routePrefix: "/docs" });
 
   app.addHook("onRequest", async (request) => {
-    if (!request.url.startsWith("/v2/")) return;
+    const protectedRoute = request.url.startsWith("/v2/")
+      || (config.openaiCompatibilityEnabled && request.url.startsWith("/v1/"));
+    if (!protectedRoute) return;
     const authorization = request.headers.authorization;
     if (!authorization?.startsWith("Bearer ")) {
       throw new GatewayError("AUTH_REQUIRED", "Bearer authentication is required", 401);
@@ -93,14 +97,19 @@ export async function buildApp(dependencies: AppDependencies): Promise<FastifyIn
     if (normalized.code === "INTERNAL_ERROR") {
       request.log.error({ err: error }, "gateway request failed");
     }
-    void reply.status(normalized.statusCode).send({
-      error: { code: normalized.code, message: normalized.message, retryable: normalized.retryable }
-    });
+    void reply.status(normalized.statusCode).send(
+      request.url.startsWith("/v1/")
+        ? openAIErrorEnvelope(normalized)
+        : { error: { code: normalized.code, message: normalized.message, retryable: normalized.retryable } }
+    );
   });
-  app.setNotFoundHandler((_request, reply) => {
-    void reply.status(404).send({
-      error: { code: "NOT_FOUND", message: "Resource not found", retryable: false }
-    });
+  app.setNotFoundHandler((request, reply) => {
+    const error = new GatewayError("NOT_FOUND", "Resource not found", 404);
+    void reply.status(404).send(
+      request.url.startsWith("/v1/")
+        ? openAIErrorEnvelope(error)
+        : { error: { code: error.code, message: error.message, retryable: error.retryable } }
+    );
   });
 
   app.get("/healthz", {
@@ -126,6 +135,10 @@ export async function buildApp(dependencies: AppDependencies): Promise<FastifyIn
       { id: "inference.turn", enabled: true, modes: ["read-only"], structuredOutput: true }
     ]
   }));
+
+  if (config.openaiCompatibilityEnabled) {
+    await registerOpenAIResponsesRoutes(app, { config, store, processor });
+  }
 
   app.get("/v2/repositories", async () => ({
     repositories: [...config.repositories.values()].map((repository) => ({ id: repository.id }))

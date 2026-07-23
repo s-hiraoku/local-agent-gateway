@@ -14,6 +14,7 @@ export function testConfig(overrides: Partial<GatewayConfig> = {}): GatewayConfi
     codexCommand: "codex",
     codexHome: "/tmp/codexgw-test-home",
     inferenceWorkspaceRoot: "/tmp/codexgw-test-inference",
+    openaiCompatibilityEnabled: false,
     maxQueuedJobs: 10,
     maxConcurrentJobs: 1,
     maxPromptBytes: 64 * 1024,

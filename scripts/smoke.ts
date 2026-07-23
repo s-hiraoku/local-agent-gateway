@@ -18,6 +18,7 @@ const config: GatewayConfig = {
   codexCommand: "codex",
   codexHome: "/tmp/codexgw-smoke",
   inferenceWorkspaceRoot: "/tmp/codexgw-smoke-inference",
+  openaiCompatibilityEnabled: false,
   maxQueuedJobs: 10,
   maxConcurrentJobs: 1,
   maxPromptBytes: 64 * 1024,

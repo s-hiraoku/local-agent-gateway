@@ -129,6 +129,8 @@ describe("local production installer", () => {
     const launcher = readFileSync(new URL("../scripts/local-production/launcher.sh", import.meta.url), "utf8");
     expect(launcher).toContain('[[ -O "${CODEX_HOME}" ]]');
     expect(launcher).toContain("dedicated Codex home must have mode 0700");
+    expect(launcher).toContain('export CODEXGW_OPENAI_COMPATIBILITY_ENABLED="${OPENAI_COMPATIBILITY}"');
+    expect(launcher).toContain('OPENAI_COMPATIBILITY="false"');
   });
 
   it("waits for port 8787 to become available and rejects a persistent listener", async () => {
