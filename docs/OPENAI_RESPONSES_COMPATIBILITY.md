@@ -55,6 +55,7 @@ The operator authenticates the dedicated home before enabling the compatibility 
 
 ```bash
 mkdir -p "$HOME/.codex-gateway"
+chmod 700 "$HOME/.codex-gateway"
 CODEX_HOME="$HOME/.codex-gateway" codex login
 ```
 

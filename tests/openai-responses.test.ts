@@ -184,6 +184,18 @@ describe("OpenAI Responses compatibility", () => {
     });
     expect(model.statusCode).toBe(400);
     expect(model.json().error.code).toBe("INVALID_REQUEST");
+
+    const structuredInput = await app.inject({
+      method: "POST",
+      url: "/v1/responses",
+      headers: authorization,
+      payload: {
+        model: "codex-subscription",
+        input: [{ role: "user", content: [{ type: "input_text", text: "hello" }] }]
+      }
+    });
+    expect(structuredInput.statusCode).toBe(400);
+    expect(structuredInput.json().error.code).toBe("INVALID_REQUEST");
   });
 
   it("enforces the configured UTF-8 prompt byte limit", async () => {
@@ -192,7 +204,7 @@ describe("OpenAI Responses compatibility", () => {
       method: "POST",
       url: "/v1/responses",
       headers: authorization,
-      payload: { model: "codex-subscription", input: "123456789" }
+      payload: { model: "codex-subscription", input: "日本語" }
     });
     expect(response.statusCode).toBe(400);
     expect(response.json().error).toMatchObject({
