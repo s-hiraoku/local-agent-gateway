@@ -33,7 +33,7 @@ Production use therefore requires a separately verified execution boundary that 
 
 Output filtering is not an acceptable substitute because secrets can be transformed before output.
 
-The optional Responses compatibility interface increases the value of a stolen Gateway token because it grants subscription-backed inference without the `/v2` job workflow. It remains inside the same trusted-owner boundary: enabling it for untrusted clients or prompts is prohibited until readable-root isolation is implemented and verified.
+The optional Responses compatibility interface increases the value of a stolen Gateway token because it grants subscription-backed inference without requiring clients to use the `/v2` job API. Requests still run as durable inference jobs. The interface remains inside the same trusted-owner boundary: enabling it for untrusted clients or prompts is prohibited until readable-root isolation is implemented and verified.
 
 The selected target and its required denial tests are specified in [Readable-root isolation design](READABLE_ROOT_ISOLATION.md). That document is a migration design, not evidence that the current LaunchAgent is isolated.
 

@@ -111,7 +111,9 @@ export async function registerOpenAIResponsesRoutes(
       return;
     }
 
+    let disconnected = false;
     const cancelOnClose = () => {
+      disconnected = true;
       if (!reply.raw.writableEnded) void processor.cancel(request.principalId, submitted.job.id).catch(() => undefined);
     };
     reply.raw.once("close", cancelOnClose);
@@ -121,7 +123,8 @@ export async function registerOpenAIResponsesRoutes(
         submitted.job.id,
         store,
         processor,
-        config.turnTimeoutMs + config.rpcTimeoutMs
+        config.turnTimeoutMs + config.rpcTimeoutMs,
+        () => disconnected
       );
       if (job.status === "completed") return responseObject(job, body, "completed", secrets);
       throw jobError(job);
@@ -136,13 +139,17 @@ async function waitForTerminalJob(
   jobId: string,
   store: GatewayStore,
   processor: JobProcessor,
-  timeoutMs: number
+  timeoutMs: number,
+  disconnected: () => boolean
 ): Promise<PublicJob> {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
+    if (disconnected()) {
+      throw new GatewayError("CODEX_EXECUTION_FAILED", "The response client disconnected", 409);
+    }
     const job = await store.getJob(ownerId, jobId);
     if (isTerminal(job.status)) return job;
-    await new Promise((resolve) => setTimeout(resolve, 25));
+    await new Promise((resolve) => setTimeout(resolve, 250));
   }
   await processor.cancel(ownerId, jobId).catch(() => undefined);
   throw new GatewayError("CODEX_TIMEOUT", "The Codex-backed response timed out", 504, true);
@@ -195,33 +202,45 @@ async function streamResponse(
   });
 
   const deadline = Date.now() + config.turnTimeoutMs + config.rpcTimeoutMs;
+  const cancellationGraceMs = Math.min(config.rpcTimeoutMs, 5_000);
   let cursor = 0;
-  let timeoutRequested = false;
+  let cancellationDeadline: number | undefined;
   while (!disconnected) {
-    const events = await store.events(ownerId, initialJob.id, cursor);
-    for (const event of events) {
-      cursor = event.sequence;
-      if (event.type !== "agent.message.delta") continue;
-      const data = event.data && typeof event.data === "object" ? event.data as Record<string, unknown> : {};
-      if (typeof data.delta !== "string") continue;
-      await writeEvent(reply.raw, "response.output_text.delta", {
-        type: "response.output_text.delta",
-        item_id: messageId,
-        output_index: 0,
-        content_index: 0,
-        delta: data.delta
-      });
-    }
+    cursor = await writeAvailableDeltas(store, ownerId, initialJob.id, cursor, messageId, reply.raw);
 
     const job = await store.getJob(ownerId, initialJob.id);
     if (!isTerminal(job.status)) {
-      if (!timeoutRequested && Date.now() >= deadline) {
-        timeoutRequested = true;
+      const now = Date.now();
+      if (cancellationDeadline === undefined && now >= deadline) {
+        cancellationDeadline = now + cancellationGraceMs;
         await processor.cancel(ownerId, initialJob.id).catch(() => undefined);
+      }
+      if (cancellationDeadline !== undefined && now >= cancellationDeadline) {
+        const timeoutJob: PublicJob = {
+          ...job,
+          status: "failed",
+          completedAt: new Date().toISOString(),
+          error: {
+            code: "CODEX_TIMEOUT",
+            message: "The Codex-backed response timed out",
+            retryable: true
+          }
+        };
+        await writeEvent(reply.raw, "response.failed", {
+          type: "response.failed", response: responseObject(timeoutJob, request, "failed", secrets)
+        });
+        finished = true;
+        reply.raw.end();
+        return;
       }
       await new Promise((resolve) => setTimeout(resolve, 25));
       continue;
     }
+
+    // The producer persists its final delta before the terminal job update.
+    // Drain once more after observing that update so the stream cannot omit
+    // text committed between the preceding event poll and this status read.
+    cursor = await writeAvailableDeltas(store, ownerId, initialJob.id, cursor, messageId, reply.raw);
 
     if (job.status === "completed") {
       const text = job.result ?? "";
@@ -256,6 +275,31 @@ async function streamResponse(
     reply.raw.end();
     return;
   }
+}
+
+async function writeAvailableDeltas(
+  store: GatewayStore,
+  ownerId: string,
+  jobId: string,
+  cursor: number,
+  messageId: string,
+  target: ServerResponse
+): Promise<number> {
+  const events = await store.events(ownerId, jobId, cursor);
+  for (const event of events) {
+    cursor = event.sequence;
+    if (event.type !== "agent.message.delta") continue;
+    const data = event.data && typeof event.data === "object" ? event.data as Record<string, unknown> : {};
+    if (typeof data.delta !== "string") continue;
+    await writeEvent(target, "response.output_text.delta", {
+      type: "response.output_text.delta",
+      item_id: messageId,
+      output_index: 0,
+      content_index: 0,
+      delta: data.delta
+    });
+  }
+  return cursor;
 }
 
 async function writeEvent(

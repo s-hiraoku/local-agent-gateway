@@ -241,7 +241,7 @@ data: {"type":"response.output_text.delta","item_id":"msg_019f...","output_index
 
 The stream MUST contain only events constructed by the compatibility adapter. Raw App Server notifications, stderr, internal event types, local paths, working directories, Codex IDs, and encrypted storage values MUST NOT be forwarded.
 
-If execution fails after HTTP headers are sent, the stream ends with `response.failed`. Responses streams do not use the Chat Completions `[DONE]` sentinel.
+If execution fails after HTTP headers are sent, the stream ends with `response.failed`. After the execution deadline, the Gateway requests cancellation and enforces a bounded grace period before emitting a timeout failure and closing the stream, even if the durable job has not yet reached a terminal state. Responses streams do not use the Chat Completions `[DONE]` sentinel.
 
 Client disconnect triggers best-effort cancellation. Cancellation is not proof that upstream subscription work was not consumed. A gateway restart may retry an interrupted read-only job under the existing at-least-once execution contract.
 

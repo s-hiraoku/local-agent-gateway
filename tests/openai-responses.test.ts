@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -48,7 +48,7 @@ async function testApp(
   const app = await buildApp({ config, store, processor, closeDatabase: database.close });
   apps.push(app);
   await app.ready();
-  return { app, database };
+  return { app, database, store };
 }
 
 const successfulRunner: CodingRunner = {
@@ -319,6 +319,61 @@ describe("OpenAI Responses compatibility", () => {
     expect(response.body).not.toContain("private-thread");
     expect(response.body).not.toContain(process.cwd());
     expect(response.body).not.toContain("[DONE]");
+  });
+
+  it("drains deltas committed immediately before the terminal job update", async () => {
+    const runner: CodingRunner = {
+      async run(input) {
+        await input.onEvent({ type: "agent.message.delta", data: { delta: "final text" } });
+        return { backendThreadId: "private-thread", result: "final text" };
+      }
+    };
+    const { app, database, store } = await testApp(runner);
+    const originalEvents = store.events.bind(store);
+    vi.spyOn(store, "events").mockImplementationOnce(async () => {
+      await expect.poll(async () => {
+        const job = await database.db.selectFrom("jobs").select("status").executeTakeFirst();
+        return job?.status;
+      }).toBe("completed");
+      return [];
+    }).mockImplementation(originalEvents);
+
+    const response = await app.inject({
+      method: "POST",
+      url: "/v1/responses",
+      headers: authorization,
+      payload: { model: "codex-subscription", input: "hello", stream: true }
+    });
+    expect(response.statusCode).toBe(200);
+    expect(response.body).toContain('"delta":"final text"');
+    expect(response.body).toContain("event: response.completed");
+  });
+
+  it("closes a timed-out stream after a bounded cancellation grace period", async () => {
+    const runner: CodingRunner = {
+      async run(input) {
+        return new Promise<never>((_resolve, reject) => {
+          input.signal.addEventListener("abort", () => {
+            setTimeout(() => reject(input.signal.reason), 100);
+          }, { once: true });
+        });
+      }
+    };
+    const { app, database } = await testApp(runner, true, { rpcTimeoutMs: 20, turnTimeoutMs: 20 });
+    const response = await app.inject({
+      method: "POST",
+      url: "/v1/responses",
+      headers: authorization,
+      payload: { model: "codex-subscription", input: "hello", stream: true }
+    });
+    expect(response.statusCode).toBe(200);
+    expect(response.body).toContain("event: response.failed");
+    expect(response.body).toContain('"code":"CODEX_TIMEOUT"');
+
+    await expect.poll(async () => {
+      const job = await database.db.selectFrom("jobs").select("status").executeTakeFirstOrThrow();
+      return job.status;
+    }).toBe("cancelled");
   });
 
   it("maps upstream rate limits to an OpenAI-shaped 429", async () => {
