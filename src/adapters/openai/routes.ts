@@ -206,7 +206,7 @@ async function streamResponse(
   let cursor = 0;
   let cancellationDeadline: number | undefined;
   while (!disconnected) {
-    cursor = await writeAvailableDeltas(store, ownerId, initialJob.id, cursor, messageId, reply.raw);
+    cursor = await drainAvailableDeltas(store, ownerId, initialJob.id, cursor, messageId, reply.raw);
 
     const job = await store.getJob(ownerId, initialJob.id);
     if (!isTerminal(job.status)) {
@@ -216,18 +216,8 @@ async function streamResponse(
         await processor.cancel(ownerId, initialJob.id).catch(() => undefined);
       }
       if (cancellationDeadline !== undefined && now >= cancellationDeadline) {
-        const timeoutJob: PublicJob = {
-          ...job,
-          status: "failed",
-          completedAt: new Date().toISOString(),
-          error: {
-            code: "CODEX_TIMEOUT",
-            message: "The Codex-backed response timed out",
-            retryable: true
-          }
-        };
         await writeEvent(reply.raw, "response.failed", {
-          type: "response.failed", response: responseObject(timeoutJob, request, "failed", secrets)
+          type: "response.failed", response: responseObject(asTimeoutJob(job), request, "failed", secrets)
         });
         finished = true;
         reply.raw.end();
@@ -240,7 +230,16 @@ async function streamResponse(
     // The producer persists its final delta before the terminal job update.
     // Drain once more after observing that update so the stream cannot omit
     // text committed between the preceding event poll and this status read.
-    cursor = await writeAvailableDeltas(store, ownerId, initialJob.id, cursor, messageId, reply.raw);
+    cursor = await drainAvailableDeltas(store, ownerId, initialJob.id, cursor, messageId, reply.raw);
+
+    if (cancellationDeadline !== undefined) {
+      await writeEvent(reply.raw, "response.failed", {
+        type: "response.failed", response: responseObject(asTimeoutJob(job), request, "failed", secrets)
+      });
+      finished = true;
+      reply.raw.end();
+      return;
+    }
 
     if (job.status === "completed") {
       const text = job.result ?? "";
@@ -277,7 +276,7 @@ async function streamResponse(
   }
 }
 
-async function writeAvailableDeltas(
+async function drainAvailableDeltas(
   store: GatewayStore,
   ownerId: string,
   jobId: string,
@@ -285,21 +284,36 @@ async function writeAvailableDeltas(
   messageId: string,
   target: ServerResponse
 ): Promise<number> {
-  const events = await store.events(ownerId, jobId, cursor);
-  for (const event of events) {
-    cursor = event.sequence;
-    if (event.type !== "agent.message.delta") continue;
-    const data = event.data && typeof event.data === "object" ? event.data as Record<string, unknown> : {};
-    if (typeof data.delta !== "string") continue;
-    await writeEvent(target, "response.output_text.delta", {
-      type: "response.output_text.delta",
-      item_id: messageId,
-      output_index: 0,
-      content_index: 0,
-      delta: data.delta
-    });
+  while (true) {
+    const events = await store.events(ownerId, jobId, cursor);
+    if (events.length === 0) return cursor;
+    for (const event of events) {
+      cursor = event.sequence;
+      if (event.type !== "agent.message.delta") continue;
+      const data = event.data && typeof event.data === "object" ? event.data as Record<string, unknown> : {};
+      if (typeof data.delta !== "string") continue;
+      await writeEvent(target, "response.output_text.delta", {
+        type: "response.output_text.delta",
+        item_id: messageId,
+        output_index: 0,
+        content_index: 0,
+        delta: data.delta
+      });
+    }
   }
-  return cursor;
+}
+
+function asTimeoutJob(job: PublicJob): PublicJob {
+  return {
+    ...job,
+    status: "failed",
+    completedAt: new Date().toISOString(),
+    error: {
+      code: "CODEX_TIMEOUT",
+      message: "The Codex-backed response timed out",
+      retryable: true
+    }
+  };
 }
 
 async function writeEvent(

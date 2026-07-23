@@ -349,6 +349,37 @@ describe("OpenAI Responses compatibility", () => {
     expect(response.body).toContain("event: response.completed");
   });
 
+  it("drains every stored delta page when replaying a completed job", async () => {
+    const deltaCount = 1_001;
+    const runner: CodingRunner = {
+      async run(input) {
+        for (let index = 0; index < deltaCount; index += 1) {
+          await input.onEvent({ type: "agent.message.delta", data: { delta: "x" } });
+        }
+        return { backendThreadId: "private-thread", result: "x".repeat(deltaCount) };
+      }
+    };
+    const { app } = await testApp(runner);
+    const headers = { ...authorization, "idempotency-key": "openai-response-many-deltas" };
+    const completed = await app.inject({
+      method: "POST",
+      url: "/v1/responses",
+      headers,
+      payload: { model: "codex-subscription", input: "hello" }
+    });
+    expect(completed.statusCode).toBe(200);
+
+    const replay = await app.inject({
+      method: "POST",
+      url: "/v1/responses",
+      headers,
+      payload: { model: "codex-subscription", input: "hello", stream: true }
+    });
+    const deltas = [...replay.body.matchAll(/^event: response\.output_text\.delta$/gm)];
+    expect(deltas).toHaveLength(deltaCount);
+    expect(replay.body).toContain("event: response.completed");
+  });
+
   it("closes a timed-out stream after a bounded cancellation grace period", async () => {
     const runner: CodingRunner = {
       async run(input) {
@@ -374,6 +405,27 @@ describe("OpenAI Responses compatibility", () => {
       const job = await database.db.selectFrom("jobs").select("status").executeTakeFirstOrThrow();
       return job.status;
     }).toBe("cancelled");
+  });
+
+  it("preserves the timeout error when deadline cancellation finishes promptly", async () => {
+    const runner: CodingRunner = {
+      async run(input) {
+        return new Promise<never>((_resolve, reject) => {
+          input.signal.addEventListener("abort", () => reject(input.signal.reason), { once: true });
+        });
+      }
+    };
+    const { app } = await testApp(runner, true, { rpcTimeoutMs: 20, turnTimeoutMs: 20 });
+    const response = await app.inject({
+      method: "POST",
+      url: "/v1/responses",
+      headers: authorization,
+      payload: { model: "codex-subscription", input: "hello", stream: true }
+    });
+    expect(response.statusCode).toBe(200);
+    expect(response.body).toContain("event: response.failed");
+    expect(response.body).toContain('"code":"CODEX_TIMEOUT"');
+    expect(response.body).not.toContain('"code":"CODEX_EXECUTION_FAILED"');
   });
 
   it("maps upstream rate limits to an OpenAI-shaped 429", async () => {
