@@ -87,6 +87,7 @@ export async function registerOpenAIResponsesRoutes(
       throw new GatewayError("INVALID_REQUEST", "Idempotency-Key must be a string", 400);
     }
     const idempotencyKey = idempotencyHeader ?? `openai-${randomUUID()}`;
+    const mayCancelJob = idempotencyHeader === undefined;
     if (idempotencyKey.length < 8 || idempotencyKey.length > 128) {
       throw new GatewayError("INVALID_REQUEST", "Idempotency-Key must contain 8 to 128 characters", 400);
     }
@@ -107,14 +108,16 @@ export async function registerOpenAIResponsesRoutes(
     processor.wake();
 
     if (body.stream) {
-      await streamResponse(request.principalId, submitted.job, body, dependencies, secrets, reply);
+      await streamResponse(request.principalId, submitted.job, body, mayCancelJob, dependencies, secrets, reply);
       return;
     }
 
     let disconnected = false;
     const cancelOnClose = () => {
       disconnected = true;
-      if (!reply.raw.writableEnded) void processor.cancel(request.principalId, submitted.job.id).catch(() => undefined);
+      if (mayCancelJob && !reply.raw.writableEnded) {
+        void processor.cancel(request.principalId, submitted.job.id).catch(() => undefined);
+      }
     };
     reply.raw.once("close", cancelOnClose);
     try {
@@ -124,7 +127,8 @@ export async function registerOpenAIResponsesRoutes(
         store,
         processor,
         config.turnTimeoutMs + config.rpcTimeoutMs,
-        () => disconnected
+        () => disconnected,
+        mayCancelJob
       );
       if (job.status === "completed") return responseObject(job, body, "completed", secrets);
       throw jobError(job);
@@ -140,7 +144,8 @@ async function waitForTerminalJob(
   store: GatewayStore,
   processor: JobProcessor,
   timeoutMs: number,
-  disconnected: () => boolean
+  disconnected: () => boolean,
+  mayCancelJob: boolean
 ): Promise<PublicJob> {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
@@ -151,7 +156,7 @@ async function waitForTerminalJob(
     if (isTerminal(job.status)) return job;
     await new Promise((resolve) => setTimeout(resolve, 250));
   }
-  await processor.cancel(ownerId, jobId).catch(() => undefined);
+  if (mayCancelJob) await processor.cancel(ownerId, jobId).catch(() => undefined);
   throw new GatewayError("CODEX_TIMEOUT", "The Codex-backed response timed out", 504, true);
 }
 
@@ -159,6 +164,7 @@ async function streamResponse(
   ownerId: string,
   initialJob: PublicJob,
   request: OpenAIResponseRequest,
+  mayCancelJob: boolean,
   dependencies: OpenAIRouteDependencies,
   secrets: SecretBox,
   reply: FastifyReply
@@ -168,7 +174,7 @@ async function streamResponse(
   let finished = false;
   const cancelOnClose = () => {
     disconnected = true;
-    if (!finished) void processor.cancel(ownerId, initialJob.id).catch(() => undefined);
+    if (mayCancelJob && !finished) void processor.cancel(ownerId, initialJob.id).catch(() => undefined);
   };
   reply.raw.once("close", cancelOnClose);
   reply.hijack();
@@ -213,7 +219,7 @@ async function streamResponse(
       const now = Date.now();
       if (cancellationDeadline === undefined && now >= deadline) {
         cancellationDeadline = now + cancellationGraceMs;
-        await processor.cancel(ownerId, initialJob.id).catch(() => undefined);
+        if (mayCancelJob) await processor.cancel(ownerId, initialJob.id).catch(() => undefined);
       }
       if (cancellationDeadline !== undefined && now >= cancellationDeadline) {
         await writeEvent(reply.raw, "response.failed", {

@@ -297,6 +297,57 @@ describe("OpenAI Responses compatibility", () => {
     }).toBe("cancelled");
   });
 
+  it("does not cancel an explicitly idempotent job when one waiter disconnects", async () => {
+    let markStarted: (() => void) | undefined;
+    let finishRun: (() => void) | undefined;
+    let aborted = false;
+    const started = new Promise<void>((resolve) => { markStarted = resolve; });
+    const finish = new Promise<void>((resolve) => { finishRun = resolve; });
+    const runner: CodingRunner = {
+      async run(input) {
+        markStarted?.();
+        input.signal.addEventListener("abort", () => { aborted = true; }, { once: true });
+        await finish;
+        return { backendThreadId: "private-thread", result: "hello" };
+      }
+    };
+    const { app, database, store } = await testApp(runner);
+    const submit = vi.spyOn(store, "submitInference");
+    await app.listen({ host: "127.0.0.1", port: 0 });
+    const address = app.server.address();
+    if (!address || typeof address === "string") throw new Error("test server did not expose a TCP address");
+    const controller = new AbortController();
+    const headers = {
+      ...authorization,
+      "content-type": "application/json",
+      "idempotency-key": "openai-shared-response"
+    };
+    const first = fetch(`http://127.0.0.1:${address.port}/v1/responses`, {
+      method: "POST",
+      headers,
+      body: JSON.stringify({ model: "codex-subscription", input: "hello" }),
+      signal: controller.signal
+    });
+    await started;
+    const second = app.inject({
+      method: "POST",
+      url: "/v1/responses",
+      headers,
+      payload: { model: "codex-subscription", input: "hello" }
+    });
+    await expect.poll(() => submit.mock.calls.length).toBe(2);
+
+    controller.abort();
+    await expect(first).rejects.toThrow();
+    finishRun?.();
+    const response = await second;
+    expect(response.statusCode).toBe(200);
+    expect(response.json().output[0].content[0].text).toBe("hello");
+    expect(aborted).toBe(false);
+    const job = await database.db.selectFrom("jobs").select("status").executeTakeFirstOrThrow();
+    expect(job.status).toBe("completed");
+  });
+
   it("maps only allowlisted text deltas to Responses SSE events", async () => {
     const runner: CodingRunner = {
       async run(input) {

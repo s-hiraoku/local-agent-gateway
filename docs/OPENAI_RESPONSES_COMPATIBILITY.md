@@ -244,7 +244,7 @@ The stream MUST contain only events constructed by the compatibility adapter. Ra
 
 If execution fails after HTTP headers are sent, the stream ends with `response.failed`. After the execution deadline, the Gateway requests cancellation and enforces a bounded grace period before emitting a timeout failure and closing the stream, even if the durable job has not yet reached a terminal state. Responses streams do not use the Chat Completions `[DONE]` sentinel.
 
-Client disconnect triggers best-effort cancellation. Cancellation is not proof that upstream subscription work was not consumed. A gateway restart may retry an interrupted read-only job under the existing at-least-once execution contract.
+Client disconnect triggers best-effort cancellation when the Gateway generated a private idempotency key for that request. A job created with an explicit `Idempotency-Key` may have other active or retrying waiters, so disconnect and delivery timeout stop only that client wait and do not cancel the shared durable job. Cancellation is not proof that upstream subscription work was not consumed. A gateway restart may retry an interrupted read-only job under the existing at-least-once execution contract.
 
 ## Error contract
 
