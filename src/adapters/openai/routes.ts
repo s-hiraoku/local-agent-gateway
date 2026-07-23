@@ -1,4 +1,3 @@
-import { once } from "node:events";
 import type { ServerResponse } from "node:http";
 import { randomUUID } from "node:crypto";
 import type { FastifyInstance, FastifyReply } from "fastify";
@@ -322,14 +321,45 @@ function asTimeoutJob(job: PublicJob): PublicJob {
   };
 }
 
-async function writeEvent(
+export async function writeEvent(
   target: ServerResponse,
   event: string,
   data: Record<string, unknown>
 ): Promise<void> {
+  if (target.destroyed || target.writableEnded) throw disconnectedStreamError();
   if (!target.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`)) {
-    await once(target, "drain");
+    await waitForDrain(target);
   }
+}
+
+function waitForDrain(target: ServerResponse): Promise<void> {
+  return new Promise((resolve, reject) => {
+    const cleanup = () => {
+      target.removeListener("drain", onDrain);
+      target.removeListener("close", onClose);
+      target.removeListener("error", onError);
+    };
+    const onDrain = () => {
+      cleanup();
+      resolve();
+    };
+    const onClose = () => {
+      cleanup();
+      reject(disconnectedStreamError());
+    };
+    const onError = () => {
+      cleanup();
+      reject(disconnectedStreamError());
+    };
+    target.once("drain", onDrain);
+    target.once("close", onClose);
+    target.once("error", onError);
+    if (target.destroyed || target.writableEnded) onClose();
+  });
+}
+
+function disconnectedStreamError(): GatewayError {
+  return new GatewayError("CODEX_EXECUTION_FAILED", "The response client disconnected", 409);
 }
 
 function jobError(job: PublicJob): GatewayError {

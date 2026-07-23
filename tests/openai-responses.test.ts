@@ -1,10 +1,13 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { mkdtempSync, rmSync } from "node:fs";
+import { EventEmitter } from "node:events";
+import type { ServerResponse } from "node:http";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { FastifyInstance } from "fastify";
 import OpenAI from "openai";
 import { buildApp } from "../src/app.js";
+import { writeEvent } from "../src/adapters/openai/routes.js";
 import type { CodingRunner } from "../src/adapters/codex/runner.js";
 import { JobProcessor } from "../src/application/job-processor.js";
 import { GatewayStore } from "../src/application/store.js";
@@ -59,6 +62,25 @@ const successfulRunner: CodingRunner = {
 };
 
 describe("OpenAI Responses compatibility", () => {
+  it("stops waiting for SSE drain when a backpressured client closes", async () => {
+    const target = new class extends EventEmitter {
+      destroyed = false;
+      writableEnded = false;
+      write() { return false; }
+    }();
+    const pending = writeEvent(
+      target as unknown as ServerResponse,
+      "response.output_text.delta",
+      { type: "response.output_text.delta", delta: "hello" }
+    );
+    target.destroyed = true;
+    target.emit("close");
+    await expect(pending).rejects.toMatchObject({ statusCode: 409 });
+    expect(target.listenerCount("drain")).toBe(0);
+    expect(target.listenerCount("close")).toBe(0);
+    expect(target.listenerCount("error")).toBe(0);
+  });
+
   it("is unregistered by default and uses an OpenAI-shaped 404", async () => {
     const { app } = await testApp(successfulRunner, false);
     const response = await app.inject({ method: "GET", url: "/v1/models" });
