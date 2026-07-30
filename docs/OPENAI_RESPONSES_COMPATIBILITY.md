@@ -81,6 +81,18 @@ The Gateway MUST refuse to start with this option enabled unless `CODEXGW_HOST` 
 
 When disabled, compatibility routes are not registered and return `404`. Enabling the interface does not weaken the existing queue, rate, prompt, result, event, concurrency, timeout, encryption, or retention limits.
 
+Implementation, deployment, and activation are separate states:
+
+1. merging this interface makes the routes available to a release build but does not change a running Gateway;
+2. installing that revision updates the versioned local-production release;
+3. setting `--openai-compatibility true` during installation persists activation and restarts the service.
+
+For a running loopback service, `GET /v1/models` provides a safe activation
+check: `404` means the compatibility routes are disabled, `401` without a
+Gateway token means they are enabled and protected, and `200` with a valid
+Gateway token returns the fixed compatibility model. The OAuth session is
+never used as the public API credential.
+
 ## Model contract
 
 The public model ID is always:
