@@ -47,7 +47,20 @@ To enable the loopback-only OpenAI Responses compatibility subset for trusted lo
 pnpm local:install -- --openai-compatibility true
 ```
 
-The setting is persisted in the versioned release configuration. Pass `--openai-compatibility false` on a later installation to disable it. See [OpenAI Responses compatibility](OPENAI_RESPONSES_COMPATIBILITY.md) before enabling it.
+This command is also the upgrade path for an existing installation after the
+implementation has been merged. Run it from a clean checkout of the intended
+revision. A merge or `git pull` alone does not update the running LaunchAgent,
+and setting `CODEXGW_OPENAI_COMPATIBILITY_ENABLED` in a shell does not modify an
+already installed release.
+
+The installer preserves the existing repository registry when
+`--repositories-json` is omitted. The compatibility setting is persisted in the
+new versioned release configuration. Pass `--openai-compatibility false` on a
+later installation to disable it. Enabling or disabling a local installation is
+an operational configuration change outside the source checkout, so it does
+not create a Git diff or require a separate source commit. See
+[OpenAI Responses compatibility](OPENAI_RESPONSES_COMPATIBILITY.md) before
+enabling it.
 
 The installer runs the full verification suite, builds JavaScript, creates a
 versioned release, installs production-only dependencies, and starts a user
@@ -145,10 +158,17 @@ After installation:
 ```bash
 "$GATEWAYCTL" status
 lsof -nP -iTCP:8787 -sTCP:LISTEN
+curl -i http://127.0.0.1:8787/healthz
+curl -i http://127.0.0.1:8787/v1/models
 ```
 
 The listener must be `127.0.0.1:8787`. `/readyz` verifies SQLite, the job
-processor, and the dedicated ChatGPT-authenticated Codex App Server.
+processor, and the dedicated ChatGPT-authenticated Codex App Server. With
+compatibility enabled, the unauthenticated `/v1/models` check must return
+`401`; `404` means the installed release has compatibility disabled. A trusted
+client configured with the Gateway bearer token must receive `200` and the
+`codex-subscription` model. Do not use or expose the Codex OAuth token for this
+check.
 
 If startup fails, inspect `gateway.error.log`. Keychain retrieval failure,
 missing Codex, an unsafe Codex home, or invalid repository configuration causes

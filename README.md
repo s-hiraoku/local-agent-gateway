@@ -163,6 +163,20 @@ For trusted OpenAI SDK clients on the same host, the optional compatibility surf
 CODEXGW_OPENAI_COMPATIBILITY_ENABLED=true pnpm dev
 ```
 
+Merging the implementation does not enable or redeploy an installed Gateway.
+For the macOS LaunchAgent deployment, install the merged revision with the
+persistent compatibility option:
+
+```bash
+pnpm local:install -- --openai-compatibility true
+```
+
+The development environment variable affects only the process started by
+`pnpm dev`. The production installer writes the option into the versioned
+release configuration and restarts the local service. When disabled, `/v1`
+compatibility routes return `404`; when enabled, an unauthenticated request
+returns `401`.
+
 ```js
 import OpenAI from "openai";
 
