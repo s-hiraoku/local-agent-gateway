@@ -29,9 +29,16 @@ async function testApp(runner?: CodingRunner, maxQueuedJobs = 10) {
     async run(input) {
       await input.onEvent({ type: "agent.message.delta", data: { delta: "done" } });
       return { backendThreadId: input.backendThreadId ?? "internal-thread-id", result: "done" };
-    }
+    },
+    async checkReady() { /* fake is always ready */ }
   };
-  const processor = new JobProcessor(store, resolvedRunner, config.repositories, config.maxConcurrentJobs, config.inferenceWorkspaceRoot);
+  const processor = new JobProcessor(
+    store,
+    { coding: resolvedRunner, inference: resolvedRunner },
+    config.repositories,
+    config.maxConcurrentJobs,
+    config.inferenceWorkspaceRoot
+  );
   const app = await buildApp({ config, store, processor, closeDatabase: database.close });
   apps.push(app);
   await app.ready();
@@ -178,7 +185,8 @@ describe("V2 API", () => {
       async run() {
         await new Promise<void>((resolve) => { release = resolve; });
         return { backendThreadId: "thread", result: "done" };
-      }
+      },
+      async checkReady() { /* ready */ }
     };
     const { app } = await testApp(runner, 1);
     const conversationId = await createConversation(app);
@@ -205,7 +213,8 @@ describe("V2 API", () => {
       async run(input) {
         receivedSchema = input.outputSchema;
         return { backendThreadId: "thread", result: JSON.stringify({ verdict: "accept" }) };
-      }
+      },
+      async checkReady() { /* ready */ }
     };
     const { app, database } = await testApp(runner);
     const request = {
@@ -245,7 +254,8 @@ describe("V2 API", () => {
       async run(input) {
         receivedCwd = input.repositoryPath;
         return { backendThreadId: "thread", result: JSON.stringify({ verdict: "revise" }) };
-      }
+      },
+      async checkReady() { /* ready */ }
     };
     const { app, database } = await testApp(runner);
     const created = await app.inject({
@@ -272,7 +282,8 @@ describe("V2 API", () => {
       async run(input) {
         receivedCwd = input.repositoryPath;
         return { backendThreadId: "thread", result: "ok" };
-      }
+      },
+      async checkReady() { /* ready */ }
     };
     const { app } = await testApp(runner);
     // A repositoryId on the inference endpoint is stripped by the schema, never
@@ -304,7 +315,8 @@ describe("V2 API", () => {
     const runner: CodingRunner = {
       async run() {
         return { backendThreadId: "thread", result: "not json" };
-      }
+      },
+      async checkReady() { /* ready */ }
     };
     const { app } = await testApp(runner);
     const unsafe = await app.inject({

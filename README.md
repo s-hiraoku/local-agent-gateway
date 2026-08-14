@@ -88,6 +88,9 @@ Important optional variables:
 | `CODEXGW_CODEX_HOME` | `~/.codex-gateway` |
 | `CODEXGW_CODEX_MODEL` | Codex account/config default |
 | `CODEXGW_OPENAI_COMPATIBILITY_ENABLED` | `false`; enables the loopback-only text Responses subset |
+| `CODEXGW_INFERENCE_PROVIDER` | `codex`; set to `claude` to run inference turns on Claude Code |
+| `CODEXGW_CLAUDE_COMMAND` | `claude` |
+| `CODEXGW_CLAUDE_MODEL` | Claude account/config default |
 | `CODEXGW_MAX_QUEUED_JOBS` | `100` |
 | `CODEXGW_MAX_CONCURRENT_JOBS` | `2` |
 | `CODEXGW_MAX_PROMPT_BYTES` | `65536` |
@@ -156,6 +159,22 @@ curl -X POST http://127.0.0.1:8787/v2/inference/runs \
 ```
 
 Inference jobs poll and read `structuredOutput` exactly like coding runs (`kind` is `inference.turn`, `repositoryId` is `null`).
+
+Inference turns can run on Claude Code instead of Codex. Coding turns are
+unaffected and always run on Codex, because repository sandboxing is
+Codex-specific. Authenticate the Claude CLI once (`claude auth login`), then:
+
+```bash
+CODEXGW_INFERENCE_PROVIDER=claude pnpm dev
+```
+
+The Claude turn runs headless with filesystem, shell, and network tools
+disabled, against the same private single-use working directory, and uses the
+owner's Claude subscription — request bodies never carry an API key. Readiness
+(`/readyz`) probes every active backend for presence, so a missing Claude CLI
+surfaces there; authentication is deliberately not probed, because doing so on
+every poll would consume subscription usage, so an unauthenticated CLI fails on
+the first real turn with `CLAUDE_UNAUTHORIZED`.
 
 For trusted OpenAI SDK clients on the same host, the optional compatibility surface exposes `GET /v1/models` and `POST /v1/responses`. Enable it only while binding to loopback:
 

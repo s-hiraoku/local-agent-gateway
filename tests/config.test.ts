@@ -56,6 +56,31 @@ describe("loadConfig", () => {
     })).toThrow(/true or false/);
   });
 
+  it("defaults the inference provider to codex and accepts claude", () => {
+    expect(loadConfig(validEnv()).inferenceProvider).toBe("codex");
+    expect(loadConfig({
+      ...validEnv(),
+      CODEXGW_INFERENCE_PROVIDER: "claude"
+    }).inferenceProvider).toBe("claude");
+    expect(() => loadConfig({
+      ...validEnv(),
+      CODEXGW_INFERENCE_PROVIDER: "gpt"
+    })).toThrow(/'codex' or 'claude'/);
+  });
+
+  it("defaults the Claude command and leaves the model unset", () => {
+    const config = loadConfig(validEnv());
+    expect(config.claudeCommand).toBe("claude");
+    expect(config.claudeModel).toBeUndefined();
+    const overridden = loadConfig({
+      ...validEnv(),
+      CODEXGW_CLAUDE_COMMAND: "/usr/local/bin/claude",
+      CODEXGW_CLAUDE_MODEL: "claude-opus-5"
+    });
+    expect(overridden.claudeCommand).toBe("/usr/local/bin/claude");
+    expect(overridden.claudeModel).toBe("claude-opus-5");
+  });
+
   it("still requires CODEXGW_REPOSITORIES_JSON to be present and an array", () => {
     const { CODEXGW_REPOSITORIES_JSON: _omitted, ...withoutRepos } = validEnv();
     void _omitted;

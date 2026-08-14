@@ -43,7 +43,7 @@ async function testApp(
   const store = new GatewayStore(database.db, new SecretBox(config.encryptionKey));
   const processor = new JobProcessor(
     store,
-    runner,
+    { coding: runner, inference: runner },
     config.repositories,
     config.maxConcurrentJobs,
     config.inferenceWorkspaceRoot
@@ -58,7 +58,8 @@ const successfulRunner: CodingRunner = {
   async run(input) {
     await input.onEvent({ type: "agent.message.delta", data: { delta: "hello" } });
     return { backendThreadId: "private-thread", result: "hello" };
-  }
+  },
+  async checkReady() { /* ready */ }
 };
 
 describe("OpenAI Responses compatibility", () => {
@@ -118,7 +119,8 @@ describe("OpenAI Responses compatibility", () => {
       async run(input) {
         receivedPrompt = input.prompt;
         return { backendThreadId: "private-thread", result: "hello" };
-      }
+      },
+      async checkReady() { /* ready */ }
     };
     const { app, database } = await testApp(runner);
     const request = {
@@ -241,7 +243,8 @@ describe("OpenAI Responses compatibility", () => {
         return new Promise<never>((_resolve, reject) => {
           input.signal.addEventListener("abort", () => reject(input.signal.reason), { once: true });
         });
-      }
+      },
+      async checkReady() { /* ready */ }
     };
     const { app, database } = await testApp(runner, true, { rpcTimeoutMs: 20, turnTimeoutMs: 20 });
     const response = await app.inject({
@@ -297,7 +300,8 @@ describe("OpenAI Responses compatibility", () => {
         return new Promise<never>((_resolve, reject) => {
           input.signal.addEventListener("abort", () => reject(input.signal.reason), { once: true });
         });
-      }
+      },
+      async checkReady() { /* ready */ }
     };
     const { app, database } = await testApp(runner);
     await app.listen({ host: "127.0.0.1", port: 0 });
@@ -324,7 +328,8 @@ describe("OpenAI Responses compatibility", () => {
       async run() {
         await new Promise((resolve) => setTimeout(resolve, 200));
         return { backendThreadId: "private-thread", result: "hello" };
-      }
+      },
+      async checkReady() { /* ready */ }
     };
     const { app, database, store } = await testApp(runner);
     const originalSubmit = store.submitInference.bind(store);
@@ -369,7 +374,8 @@ describe("OpenAI Responses compatibility", () => {
         input.signal.addEventListener("abort", () => { aborted = true; }, { once: true });
         await finish;
         return { backendThreadId: "private-thread", result: "hello" };
-      }
+      },
+      async checkReady() { /* ready */ }
     };
     const { app, database, store } = await testApp(runner);
     const submit = vi.spyOn(store, "submitInference");
@@ -414,7 +420,8 @@ describe("OpenAI Responses compatibility", () => {
         await input.onEvent({ type: "agent.message.delta", data: { delta: "hel" } });
         await input.onEvent({ type: "agent.message.delta", data: { delta: "lo" } });
         return { backendThreadId: "private-thread", result: "hello" };
-      }
+      },
+      async checkReady() { /* ready */ }
     };
     const { app } = await testApp(runner);
     const response = await app.inject({
@@ -449,7 +456,8 @@ describe("OpenAI Responses compatibility", () => {
       async run(input) {
         await input.onEvent({ type: "agent.message.delta", data: { delta: "final text" } });
         return { backendThreadId: "private-thread", result: "final text" };
-      }
+      },
+      async checkReady() { /* ready */ }
     };
     const { app, database, store } = await testApp(runner);
     const originalEvents = store.events.bind(store);
@@ -480,7 +488,8 @@ describe("OpenAI Responses compatibility", () => {
           await input.onEvent({ type: "agent.message.delta", data: { delta: "x" } });
         }
         return { backendThreadId: "private-thread", result: "x".repeat(deltaCount) };
-      }
+      },
+      async checkReady() { /* ready */ }
     };
     const { app } = await testApp(runner);
     const headers = { ...authorization, "idempotency-key": "openai-response-many-deltas" };
@@ -511,7 +520,8 @@ describe("OpenAI Responses compatibility", () => {
             setTimeout(() => reject(input.signal.reason), 100);
           }, { once: true });
         });
-      }
+      },
+      async checkReady() { /* ready */ }
     };
     const { app, database } = await testApp(runner, true, { rpcTimeoutMs: 20, turnTimeoutMs: 20 });
     const response = await app.inject({
@@ -536,7 +546,8 @@ describe("OpenAI Responses compatibility", () => {
         return new Promise<never>((_resolve, reject) => {
           input.signal.addEventListener("abort", () => reject(input.signal.reason), { once: true });
         });
-      }
+      },
+      async checkReady() { /* ready */ }
     };
     const { app } = await testApp(runner, true, { rpcTimeoutMs: 20, turnTimeoutMs: 20 });
     const response = await app.inject({
@@ -555,7 +566,8 @@ describe("OpenAI Responses compatibility", () => {
     const runner: CodingRunner = {
       async run() {
         throw new GatewayError("CODEX_RATE_LIMITED", "Codex plan usage limit was reached", 429, true);
-      }
+      },
+      async checkReady() { /* ready */ }
     };
     const { app } = await testApp(runner);
     const response = await app.inject({

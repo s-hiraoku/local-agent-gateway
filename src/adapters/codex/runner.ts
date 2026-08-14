@@ -1,24 +1,9 @@
 import { homedir } from "node:os";
 import { GatewayError } from "../../domain/errors.js";
 import { BufferedJsonRpcTransport, CodexRpcError } from "./json-rpc.js";
-import type { OutputSchema } from "../../domain/structured-output.js";
+import type { CodingRunInput, CodingRunResult, CodingRunner } from "../runner.js";
 
-export type CodingEvent = { type: "agent.message.delta"; data: { delta: string } };
-
-export type CodingRunInput = {
-  repositoryPath: string;
-  backendThreadId: string | null;
-  prompt: string;
-  outputSchema?: OutputSchema;
-  signal: AbortSignal;
-  onEvent: (event: CodingEvent) => Promise<void>;
-};
-
-export type CodingRunResult = { backendThreadId: string; result: string };
-
-export interface CodingRunner {
-  run(input: CodingRunInput): Promise<CodingRunResult>;
-}
+export type { CodingEvent, CodingRunInput, CodingRunResult, CodingRunner } from "../runner.js";
 
 type CodexRunnerConfig = {
   command: string;

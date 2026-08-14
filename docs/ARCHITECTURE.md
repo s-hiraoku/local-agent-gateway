@@ -24,10 +24,12 @@ The codebase separates four concerns:
 
 - `domain`: provider-neutral IDs, job states, events, and public errors;
 - `application`: conversations, durable submission, job claiming, cancellation, and recovery;
-- `adapters`: Codex App Server protocol translation;
+- `adapters`: backend protocol translation behind one provider-neutral runner contract (`adapters/runner.ts`), currently Codex App Server and Claude Code headless;
 - `infrastructure`: configuration, encryption, SQLite, HTTP, logging, and lifecycle.
 
 The domain never exposes Codex thread or turn IDs. The Codex adapter maps a Gateway conversation to an internal App Server thread. A future OpenAI adapter will implement separate capability contracts instead of being forced through coding concepts such as repositories and sandboxes.
+
+The job processor selects a runner by job kind. `coding.turn` is always routed to Codex, because read-only repository sandboxing is a Codex App Server guarantee that the Claude adapter does not reproduce. `inference.turn` is routed to `CODEXGW_INFERENCE_PROVIDER`, since it is pure text-in/JSON-out against an empty single-use directory and therefore carries no repository to isolate. The Claude adapter runs the CLI headless with filesystem, shell, and network tools disabled and takes the final answer from its native structured output rather than scraping stdout.
 
 ## Current vertical slice
 
@@ -109,6 +111,7 @@ Read-only is not considered a complete confidentiality boundary. The required ho
 | Backend | Credential source | Usage domain |
 | --- | --- | --- |
 | Codex App Server | dedicated local ChatGPT/Codex login | ChatGPT/Codex plan limits |
+| Claude Code headless | owner's local Claude CLI login | Claude subscription limits |
 | OpenAI Platform adapters | server-side project credential | Platform billing and rate limits |
 | Gateway clients | Gateway-issued identity/token | Gateway authorization only |
 

@@ -1,6 +1,8 @@
 import { mkdirSync } from "node:fs";
 import { buildApp } from "./app.js";
 import { CodexAppServerRunner } from "./adapters/codex/runner.js";
+import { ClaudeHeadlessRunner } from "./adapters/claude/runner.js";
+import type { CodingRunner } from "./adapters/runner.js";
 import { JobProcessor } from "./application/job-processor.js";
 import { GatewayStore } from "./application/store.js";
 import { loadConfig } from "./infrastructure/config.js";
@@ -15,7 +17,9 @@ const store = new GatewayStore(database.db, new SecretBox(config.encryptionKey),
   maxEventsPerJob: config.maxEventsPerJob,
   maxResultBytes: config.maxResultBytes
 });
-const runner = new CodexAppServerRunner({
+// Coding turns always run on Codex (repository/sandbox isolation is
+// codex-specific). Inference turns run on the configured provider.
+const codexRunner = new CodexAppServerRunner({
   command: config.codexCommand,
   codexHome: config.codexHome,
   ...(config.codexModel ? { model: config.codexModel } : {}),
@@ -23,13 +27,30 @@ const runner = new CodexAppServerRunner({
   turnTimeoutMs: config.turnTimeoutMs,
   maxResultBytes: config.maxResultBytes
 });
-const processor = new JobProcessor(store, runner, config.repositories, config.maxConcurrentJobs, config.inferenceWorkspaceRoot);
+const claudeRunner = new ClaudeHeadlessRunner({
+  command: config.claudeCommand,
+  ...(config.claudeModel ? { model: config.claudeModel } : {}),
+  turnTimeoutMs: config.turnTimeoutMs,
+  maxResultBytes: config.maxResultBytes
+});
+const inferenceRunner: CodingRunner = config.inferenceProvider === "claude" ? claudeRunner : codexRunner;
+const processor = new JobProcessor(
+  store,
+  { coding: codexRunner, inference: inferenceRunner },
+  config.repositories,
+  config.maxConcurrentJobs,
+  config.inferenceWorkspaceRoot
+);
 const app = await buildApp({
   config,
   store,
   processor,
   closeDatabase: database.close,
-  readinessProbe: () => runner.checkReady()
+  // Probe every distinct active runner so readiness reflects the real backends.
+  readinessProbe: async () => {
+    await codexRunner.checkReady();
+    if (inferenceRunner !== codexRunner) await inferenceRunner.checkReady();
+  }
 });
 
 let closing = false;

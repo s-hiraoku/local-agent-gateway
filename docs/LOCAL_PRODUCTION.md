@@ -47,6 +47,20 @@ To enable the loopback-only OpenAI Responses compatibility subset for trusted lo
 pnpm local:install -- --openai-compatibility true
 ```
 
+To run inference turns on Claude Code instead of Codex, add:
+
+```bash
+pnpm local:install -- --inference-provider claude
+```
+
+The installer resolves the `claude` executable with `which` and pins its
+absolute path into the release configuration, so the LaunchAgent does not
+depend on its own `PATH`. Pass `--claude-command` to select a specific binary
+or `--claude-model` to pin a model. Coding turns are unaffected and continue to
+run on Codex. Authenticate the Claude CLI as the same user that runs the
+LaunchAgent before installing, and pass `--inference-provider codex` on a later
+installation to switch back.
+
 This command is also the upgrade path for an existing installation after the
 implementation has been merged. Run it from a clean checkout of the intended
 revision. A merge or `git pull` alone does not update the running LaunchAgent,
@@ -76,7 +90,7 @@ Runtime files live under:
   current -> releases/<timestamp>-<commit>
   releases/<timestamp>-<commit>/
     bin/{launcher.sh,gatewayctl}
-    config/{repositories.json,codex-command,codex-home,openai-compatibility}
+    config/{repositories.json,codex-command,codex-home,openai-compatibility,inference-provider[,claude-command,claude-model]}
     dist/
     runtime/
   data/gateway-v2.sqlite
