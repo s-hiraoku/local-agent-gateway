@@ -213,7 +213,7 @@ function isLikelyLocalPosixPath(candidate: string): boolean {
   return root !== undefined && LOCAL_POSIX_ROOTS.has(root);
 }
 
-function appendBounded(current: string, delta: string, maxBytes: number): string {
+export function appendBounded(current: string, delta: string, maxBytes: number): string {
   const combined = current + delta;
   if (Buffer.byteLength(combined) <= maxBytes) return combined;
   return Buffer.from(combined).subarray(0, maxBytes).toString("utf8").replace(/\uFFFD$/, "");

@@ -85,6 +85,15 @@ describe("ClaudeHeadlessRunner", () => {
     await expect(runner.run(baseInput)).rejects.toBeInstanceOf(GatewayError);
   });
 
+  it("bounds an oversized result to maxResultBytes", async () => {
+    const { command } = fakeClaude(
+      `printf '{"type":"result","subtype":"success","is_error":false,"result":"%s"}' "$(printf 'x%.0s' $(seq 1 500))"`
+    );
+    const runner = new ClaudeHeadlessRunner({ command, turnTimeoutMs: 5_000, maxResultBytes: 100 });
+    const result = await runner.run(baseInput);
+    expect(Buffer.byteLength(result.result)).toBeLessThanOrEqual(100);
+  });
+
   it("checkReady resolves when the binary runs", async () => {
     const { command } = fakeClaude(`echo "2.1.0 (Claude Code)"`);
     await expect(runnerFor(command).checkReady()).resolves.toBeUndefined();

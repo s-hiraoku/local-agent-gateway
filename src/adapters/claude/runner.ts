@@ -1,6 +1,6 @@
 import { spawn } from "node:child_process";
 import { GatewayError } from "../../domain/errors.js";
-import { sanitizeOutput } from "../codex/runner.js";
+import { appendBounded, sanitizeOutput } from "../codex/runner.js";
 import type { CodingRunInput, CodingRunResult, CodingRunner } from "../runner.js";
 
 // Claude provider for inference turns: runs Claude Code headless
@@ -63,9 +63,7 @@ export class ClaudeHeadlessRunner implements CodingRunner {
     if (!result) {
       throw new GatewayError("CLAUDE_EXECUTION_FAILED", "Claude returned an empty result", 502, true);
     }
-    const bounded = Buffer.byteLength(result) > this.config.maxResultBytes
-      ? Buffer.from(result).subarray(0, this.config.maxResultBytes).toString("utf8").replace(/�$/, "")
-      : result;
+    const bounded = appendBounded("", result, this.config.maxResultBytes);
     // Claude has no persistent backend thread in this mode; a fresh session id
     // per run is fine because inference turns are stateless.
     const sessionId = typeof envelope.session_id === "string" ? envelope.session_id : "claude-inference";
