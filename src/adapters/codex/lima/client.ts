@@ -80,7 +80,11 @@ export class LimaClient {
       ], 30_000);
       await this.exec([
         this.config.limactl, "shell", this.config.instance, "--",
-        "sudo", "chmod", "-R", "a+rX,a-w", guestPath
+        "sudo", "chmod", "0711", GUEST_SNAPSHOT_ROOT
+      ], 30_000);
+      await this.exec([
+        this.config.limactl, "shell", this.config.instance, "--",
+        "sudo", "chmod", "-R", "u=rx,g=rx,o=", guestPath
       ], 30_000);
     } catch (error) {
       await cleanup();
@@ -108,32 +112,56 @@ export class LimaClient {
     }
   }
 
-  private pipeTar(hostPath: string, guestPath: string): Promise<void> {
+  private pipeTar(hostPath: string, guestPath: string, timeoutMs = 60_000): Promise<void> {
     return new Promise((resolve, reject) => {
+      const env = buildLimaHostEnvironment(process.env);
       const tar = spawn("tar", ["-C", hostPath, "-cf", "-", "."], {
-        env: buildLimaHostEnvironment(process.env),
+        env,
         stdio: ["ignore", "pipe", "pipe"]
       });
       const lima = spawn(this.config.limactl, [
         "shell", this.config.instance, "--",
         "sudo", "tar", "-C", guestPath, "-xf", "-"
       ], {
-        env: buildLimaHostEnvironment(process.env),
+        env,
         stdio: ["pipe", "ignore", "pipe"]
       });
       tar.stdout?.pipe(lima.stdin!);
       let settled = false;
+      let tarCode: number | null = null;
+      let limaCode: number | null = null;
+      const snapshotError = () => new GatewayError(
+        "CODEX_EXECUTION_FAILED",
+        "Codex could not copy the repository snapshot",
+        502,
+        true
+      );
       const finish = (error?: Error) => {
         if (settled) return;
         settled = true;
+        clearTimeout(timer);
+        tar.kill("SIGKILL");
+        lima.kill("SIGKILL");
+        lima.stdin?.destroy();
         if (error) reject(error);
         else resolve();
       };
+      const complete = () => {
+        if (tarCode === null || limaCode === null) return;
+        if (tarCode === 0 && limaCode === 0) finish();
+        else finish(snapshotError());
+      };
+      const timer = setTimeout(() => finish(snapshotError()), timeoutMs);
+      timer.unref();
       lima.on("error", () => finish(new GatewayError("CODEX_NOT_CONFIGURED", "The Lima Codex instance is not running", 503, false)));
-      tar.on("error", () => finish(new GatewayError("CODEX_EXECUTION_FAILED", "Codex could not copy the repository snapshot", 502, true)));
+      tar.on("error", () => finish(snapshotError()));
+      tar.on("close", (code) => {
+        tarCode = code ?? 1;
+        complete();
+      });
       lima.on("close", (code) => {
-        if (code === 0) finish();
-        else finish(new GatewayError("CODEX_EXECUTION_FAILED", "Codex could not copy the repository snapshot", 502, true));
+        limaCode = code ?? 1;
+        complete();
       });
     });
   }
