@@ -113,6 +113,16 @@ describe("ClaudeHeadlessRunner", () => {
     await expect(runner.run(baseInput)).rejects.toBeInstanceOf(GatewayError);
   });
 
+  it("rejects an oversized stdout envelope before parsing", async () => {
+    const { command } = fakeClaude(
+      `printf '{"type":"result","subtype":"success","is_error":false,"result":"%s"}' "$(printf 'x%.0s' $(seq 1 9000))"`
+    );
+    const runner = new ClaudeHeadlessRunner({ command, turnTimeoutMs: 5_000, maxResultBytes: 100 });
+    await expect(runner.run(baseInput)).rejects.toMatchObject({
+      code: "CLAUDE_EXECUTION_FAILED"
+    });
+  });
+
   it("bounds an oversized result to maxResultBytes", async () => {
     const { command } = fakeClaude(
       `printf '{"type":"result","subtype":"success","is_error":false,"result":"%s"}' "$(printf 'x%.0s' $(seq 1 500))"`

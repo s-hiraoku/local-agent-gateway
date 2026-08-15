@@ -109,8 +109,12 @@ export class ClaudeHeadlessRunner implements CodingRunner {
         return;
       }
       let stdout = "";
+      let stdoutBytes = 0;
       let stderr = "";
       let settled = false;
+      const maxStdoutBytes = phase === "turn"
+        ? this.config.maxResultBytes * 2 + 8192
+        : 65_536;
       const timer = setTimeout(() => finish(() => {
         child.kill("SIGKILL");
         const code = phase === "turn" ? "CLAUDE_TIMEOUT" : "CLAUDE_NOT_CONFIGURED";
@@ -131,7 +135,17 @@ export class ClaudeHeadlessRunner implements CodingRunner {
         action();
       };
 
-      child.stdout.on("data", (chunk: Buffer) => { stdout += chunk.toString(); });
+      child.stdout.on("data", (chunk: Buffer) => {
+        stdoutBytes += chunk.byteLength;
+        if (stdoutBytes > maxStdoutBytes) {
+          finish(() => {
+            child.kill("SIGKILL");
+            reject(new GatewayError("CLAUDE_EXECUTION_FAILED", "Claude produced an oversized response", 502, true));
+          });
+          return;
+        }
+        stdout += chunk.toString();
+      });
       child.stderr.on("data", (chunk: Buffer) => { stderr = `${stderr}${chunk.toString()}`.slice(-8192); });
       child.on("error", (error) => finish(() => {
         const code = (error as NodeJS.ErrnoException).code === "ENOENT" ? "CLAUDE_NOT_CONFIGURED" : "CLAUDE_EXECUTION_FAILED";
