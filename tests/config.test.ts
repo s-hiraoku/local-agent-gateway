@@ -78,6 +78,11 @@ describe("loadConfig", () => {
       ...validEnv(),
       CODEXGW_LIMA_INSTANCE: "Bad Instance"
     })).toThrow(/lowercase letters, digits, _ or -/);
+    expect(loadConfig(validEnv()).limaAllowUnprovenToolIsolation).toBe(false);
+    expect(loadConfig({
+      ...validEnv(),
+      CODEXGW_LIMA_ALLOW_UNPROVEN_TOOL_ISOLATION: "true"
+    }).limaAllowUnprovenToolIsolation).toBe(true);
   });
 
   it("defaults the inference provider to codex and accepts claude", () => {

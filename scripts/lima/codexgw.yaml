@@ -1,8 +1,9 @@
 # Lima instance for Local Agent Gateway coding execution.
 # plain: true disables default HOME mounts, guest agent, and containerd.
 # Create once: limactl start --name=codexgw scripts/lima/codexgw.yaml
-# Install a pinned Codex CLI on the guest PATH, then authenticate:
-# limactl shell codexgw -- sudo -u codexgw -H env CODEX_HOME=/var/lib/codexgw/home codex login
+# Then install helpers and authenticate:
+#   scripts/lima/install-guest-helpers.sh
+#   limactl shell codexgw -- sudo -u codexgw -H env CODEX_HOME=/var/lib/codexgw/home codex login
 
 minimumLimaVersion: "1.0.0"
 vmType: vz
@@ -36,7 +37,7 @@ provision:
     export DEBIAN_FRONTEND=noninteractive
     if command -v apt-get >/dev/null 2>&1; then
       apt-get update -qq
-      apt-get install -y --no-install-recommends nftables
+      apt-get install -y --no-install-recommends nftables bubblewrap
     fi
     if ! id -u codexgw >/dev/null 2>&1; then
       useradd --system --home /var/lib/codexgw/home --shell /usr/sbin/nologin --create-home codexgw
@@ -44,7 +45,7 @@ provision:
     if ! id -u codexgw-tool >/dev/null 2>&1; then
       useradd --system --home /var/lib/codexgw/tool --shell /usr/sbin/nologin --create-home codexgw-tool
     fi
-    mkdir -p /var/lib/codexgw/home /var/lib/codexgw/snapshots /var/lib/codexgw/tool
+    mkdir -p /var/lib/codexgw/home /var/lib/codexgw/snapshots /var/lib/codexgw/tool /usr/local/lib/codexgw/bin /etc/codexgw
     chown -R codexgw:codexgw /var/lib/codexgw/home
     chmod 700 /var/lib/codexgw/home
     chown root:root /var/lib/codexgw/snapshots
@@ -59,9 +60,21 @@ provision:
       echo "nftables is required for the guest egress policy" >&2
       exit 1
     fi
+    if ! command -v bwrap >/dev/null 2>&1; then
+      echo "bubblewrap is required for guest tool isolation" >&2
+      exit 1
+    fi
     nft -f - <<'NFT'
     flush ruleset
     table inet filter {
+      set codex4 {
+        type ipv4_addr
+        flags interval
+      }
+      set codex6 {
+        type ipv6_addr
+        flags interval
+      }
       chain input {
         type filter hook input priority 0; policy drop;
         iif lo accept
@@ -79,7 +92,8 @@ provision:
         ip6 daddr { fc00::/7, fe80::/10 } drop
         udp dport 53 accept
         tcp dport 53 accept
-        tcp dport 443 accept
+        tcp dport 443 ip daddr @codex4 accept
+        tcp dport 443 ip6 daddr @codex6 accept
       }
     }
     NFT

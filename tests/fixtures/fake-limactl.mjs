@@ -85,5 +85,14 @@ if (action[0] === "rm" && action[1] === "-rf" && action[2]) {
   process.exit(0);
 }
 
+if (action[0] === "/usr/local/lib/codexgw/prove-tool-isolation") {
+  process.exit(readControl("isolation", "pass") === "fail" ? 1 : 0);
+}
+
+if (action.includes("codex") && action.at(-1) === "--version") {
+  process.stdout.write("codex-cli 0.128.0\n");
+  process.exit(0);
+}
+
 process.stderr.write(`unsupported guest command: ${action.join(" ")}\n`);
 process.exit(1);

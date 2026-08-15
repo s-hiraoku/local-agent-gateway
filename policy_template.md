@@ -18,7 +18,7 @@ This repository is security-sensitive local infrastructure.
 - Queue, concurrency, protocol, event, result, stderr, and time limits must remain bounded.
 - Idempotent API submission and at-least-once Codex execution are distinct guarantees.
 
-Read-only is not a confidentiality boundary. An opt-in Lima executor can keep host and Gateway files out of the Codex VM; the default LaunchAgent still runs on the host. Do not represent the service as production-ready for untrusted prompts or repositories until the readable-root isolation gate in `docs/THREAT_MODEL.md` is verified.
+Read-only is not a confidentiality boundary. An opt-in Lima executor can keep host and Gateway files out of the Codex VM and fail-closes readiness unless the guest tool-isolation probe passes. The default LaunchAgent still runs on the host. Do not represent the service as production-ready for untrusted prompts or repositories until the readable-root isolation gate in `docs/THREAT_MODEL.md` is verified.
 
 ## Future capabilities
 

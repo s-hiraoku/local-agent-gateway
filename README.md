@@ -29,7 +29,7 @@ Not implemented yet:
 - image, audio, realtime, or general OpenAI Platform Responses API adapters;
 - multi-user identity or token administration;
 - Codex account login endpoints and usage reporting;
-- a completed readable-root boundary (opt-in Lima exists; default LaunchAgent is still host-local);
+- a completed readable-root boundary (opt-in Lima and a fail-closed guest isolation probe exist; default LaunchAgent is still host-local);
 - artifact retention and telemetry exporters.
 
 V2 is a production-shaped foundation, not production-ready for untrusted users or untrusted repositories. See [Architecture](docs/ARCHITECTURE.md) and [Threat model](docs/THREAT_MODEL.md).
@@ -94,6 +94,7 @@ Important optional variables:
 | `CODEXGW_CODEX_EXECUTOR` | `host`; set to `lima` to run Codex inside the operator-created Lima VM |
 | `CODEXGW_LIMA_COMMAND` | `limactl` |
 | `CODEXGW_LIMA_INSTANCE` | `codexgw` |
+| `CODEXGW_LIMA_ALLOW_UNPROVEN_TOOL_ISOLATION` | `false`; if the guest isolation probe fails, `/readyz` stays closed unless this is `true` |
 | `CODEXGW_MAX_QUEUED_JOBS` | `100` |
 | `CODEXGW_MAX_CONCURRENT_JOBS` | `2` |
 | `CODEXGW_MAX_PROMPT_BYTES` | `65536` |
@@ -261,4 +262,4 @@ Gateway credentials and backend credentials are separate. Clients submit only Ga
 
 The optional `/v1` compatibility routes use the same Gateway bearer token. They do not expose OAuth endpoints or OAuth tokens, and cannot be enabled on a non-loopback bind address.
 
-`read-only` prevents writes and, with `approvalPolicy: never`, rejects interactive escalation. It is not by itself proof that Codex cannot read host files outside the repository. An opt-in Lima executor (`CODEXGW_CODEX_EXECUTOR=lima`) copies one repository snapshot into a dedicated VM; the default LaunchAgent still runs Codex on the host. Until the acceptance tests in [Readable-root isolation](docs/READABLE_ROOT_ISOLATION.md) pass, run this only as a dedicated local service account against trusted repositories and trusted client applications. Do not expose the port directly to the public internet.
+`read-only` prevents writes and, with `approvalPolicy: never`, rejects interactive escalation. It is not by itself proof that Codex cannot read host files outside the repository. An opt-in Lima executor (`CODEXGW_CODEX_EXECUTOR=lima`) copies one repository snapshot into a dedicated VM and fail-closes `/readyz` unless the guest tool-isolation probe passes. The default LaunchAgent still runs Codex on the host. Until the acceptance tests in [Readable-root isolation](docs/READABLE_ROOT_ISOLATION.md) pass, run this only as a dedicated local service account against trusted repositories and trusted client applications. Do not expose the port directly to the public internet.

@@ -26,7 +26,8 @@ const limaLauncher = config.codexExecutor === "lima"
   ? limaAppServerLauncher(defaultLimaClient({
       limactl: config.limaCommand,
       instance: config.limaInstance,
-      guestCodexCommand: config.codexCommand
+      guestCodexCommand: config.codexCommand,
+      allowUnprovenToolIsolation: config.limaAllowUnprovenToolIsolation
     }))
   : undefined;
 const codexRunner = new CodexAppServerRunner({

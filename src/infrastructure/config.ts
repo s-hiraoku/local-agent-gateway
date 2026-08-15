@@ -26,6 +26,7 @@ export type GatewayConfig = {
   codexExecutor: "host" | "lima";
   limaCommand: string;
   limaInstance: string;
+  limaAllowUnprovenToolIsolation: boolean;
   maxQueuedJobs: number;
   maxConcurrentJobs: number;
   maxPromptBytes: number;
@@ -172,6 +173,11 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): GatewayConfig 
     codexExecutor,
     limaCommand: env.CODEXGW_LIMA_COMMAND ?? "limactl",
     limaInstance,
+    limaAllowUnprovenToolIsolation: booleanFlag(
+      env.CODEXGW_LIMA_ALLOW_UNPROVEN_TOOL_ISOLATION,
+      false,
+      "CODEXGW_LIMA_ALLOW_UNPROVEN_TOOL_ISOLATION"
+    ),
     maxQueuedJobs: positiveInteger(env.CODEXGW_MAX_QUEUED_JOBS, 100, "CODEXGW_MAX_QUEUED_JOBS"),
     maxConcurrentJobs: positiveInteger(env.CODEXGW_MAX_CONCURRENT_JOBS, 2, "CODEXGW_MAX_CONCURRENT_JOBS"),
     maxPromptBytes: positiveInteger(env.CODEXGW_MAX_PROMPT_BYTES, 64 * 1024, "CODEXGW_MAX_PROMPT_BYTES"),

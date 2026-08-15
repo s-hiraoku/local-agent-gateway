@@ -1,4 +1,3 @@
-import { spawn } from "node:child_process";
 import { homedir } from "node:os";
 import { GatewayError } from "../../domain/errors.js";
 import {
@@ -79,7 +78,7 @@ export class CodexAppServerRunner implements CodingRunner {
   }
 
   async run(input: CodingRunInput): Promise<CodingRunResult> {
-    const workspace = await this.launcher.prepareWorkspace(input.repositoryPath);
+    const workspace = await this.launcher.prepareWorkspace(input.repositoryPath, input.signal);
     let transport: BufferedJsonRpcTransport | undefined;
     try {
       await this.assertCliVersion(input.signal);
@@ -147,62 +146,10 @@ export class CodexAppServerRunner implements CodingRunner {
   }
 
   private async assertCliVersion(signal?: AbortSignal): Promise<void> {
-    const output = await this.readCliVersion(signal);
+    const output = await this.launcher.readCliVersion(signal);
     const version = parseCodexVersion(output);
     if (!version) throw unsupportedCodexVersionError();
     assertSupportedCodexVersion(version);
-  }
-
-  private readCliVersion(signal?: AbortSignal): Promise<string> {
-    return new Promise((resolve, reject) => {
-      if (signal?.aborted) {
-        reject(signal.reason ?? new Error("Aborted"));
-        return;
-      }
-      const child = spawn(this.config.command, ["--version"], {
-        env: buildCodexEnvironment(process.env, this.config.codexHome),
-        stdio: ["ignore", "pipe", "pipe"]
-      });
-      let stdout = "";
-      let stdoutBytes = 0;
-      let settled = false;
-      const onAbort = () => finish(() => {
-        child.kill("SIGKILL");
-        reject(signal?.reason ?? new Error("Aborted"));
-      });
-      signal?.addEventListener("abort", onAbort, { once: true });
-      const timer = setTimeout(() => finish(() => {
-        child.kill("SIGKILL");
-        reject(new GatewayError("CODEX_NOT_CONFIGURED", "Codex version probe timed out", 503, false));
-      }), 10_000);
-      timer.unref();
-      const finish = (action: () => void) => {
-        if (settled) return;
-        settled = true;
-        clearTimeout(timer);
-        signal?.removeEventListener("abort", onAbort);
-        action();
-      };
-      child.stdout?.on("data", (chunk: Buffer) => {
-        stdoutBytes += chunk.byteLength;
-        if (stdoutBytes > 4096) {
-          finish(() => {
-            child.kill("SIGKILL");
-            reject(unsupportedCodexVersionError());
-          });
-          return;
-        }
-        stdout += chunk.toString();
-      });
-      child.on("error", (error) => finish(() => {
-        const code = (error as NodeJS.ErrnoException).code === "ENOENT" ? "CODEX_NOT_CONFIGURED" : "CODEX_EXECUTION_FAILED";
-        reject(new GatewayError(code, "Codex executable could not be started", 503, false));
-      }));
-      child.on("close", (exitCode) => finish(() => {
-        if (exitCode === 0) resolve(stdout);
-        else reject(new GatewayError("CODEX_NOT_CONFIGURED", "Codex version probe failed", 503, false));
-      }));
-    });
   }
 
   private async initialize(transport: BufferedJsonRpcTransport): Promise<void> {

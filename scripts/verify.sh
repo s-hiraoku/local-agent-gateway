@@ -104,6 +104,10 @@ main() {
     /bin/zsh -n scripts/local-production/launcher.sh scripts/local-production/gatewayctl.sh
   fi
 
+  echo "Checking Lima guest helper shell syntax"
+  bash -n scripts/lima/install-guest-helpers.sh scripts/lima/accept.sh \
+    scripts/lima/guest/bwrap scripts/lima/guest/prove-tool-isolation scripts/lima/guest/refresh-egress
+
   if [[ "${detected}" -eq 0 ]]; then
     mark_missing_check "No project-specific verification detected"
   fi

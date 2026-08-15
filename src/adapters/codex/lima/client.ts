@@ -3,15 +3,18 @@ import { randomUUID } from "node:crypto";
 import { GatewayError } from "../../../domain/errors.js";
 import {
   DEFAULT_LIMA_INSTANCE,
+  GUEST_APP_SERVER_PATH,
   GUEST_SNAPSHOT_ROOT,
   GUEST_SUPERVISOR,
-  GUEST_CODEX_HOME
+  GUEST_CODEX_HOME,
+  GUEST_ISOLATION_PROBE
 } from "./constants.js";
 
 export type LimaClientConfig = {
   limactl: string;
   instance: string;
   guestCodexCommand: string;
+  allowUnprovenToolIsolation?: boolean;
 };
 
 export type LimaLaunch = {
@@ -38,7 +41,7 @@ export class LimaClient {
       args: [
         "shell", this.config.instance, "--",
         "sudo", "-u", GUEST_SUPERVISOR, "-H", "--",
-        "env", `CODEX_HOME=${GUEST_CODEX_HOME}`, "NO_COLOR=1", "TERM=dumb",
+        "env", `CODEX_HOME=${GUEST_CODEX_HOME}`, `PATH=${GUEST_APP_SERVER_PATH}`, "NO_COLOR=1", "TERM=dumb",
         this.config.guestCodexCommand, "app-server"
       ],
       env: buildLimaHostEnvironment(process.env)
@@ -60,7 +63,33 @@ export class LimaClient {
     );
   }
 
-  async copySnapshot(hostPath: string): Promise<{ guestPath: string; cleanup: () => Promise<void> }> {
+  async assertToolIsolation(): Promise<void> {
+    try {
+      await this.exec([
+        this.config.limactl, "shell", this.config.instance, "--",
+        "sudo", GUEST_ISOLATION_PROBE
+      ], 30_000);
+    } catch {
+      if (this.config.allowUnprovenToolIsolation) return;
+      throw new GatewayError(
+        "CODEX_NOT_CONFIGURED",
+        "The Lima guest tool isolation probe failed. Guest tools may still read Codex authentication state. Set CODEXGW_LIMA_ALLOW_UNPROVEN_TOOL_ISOLATION=true only for trusted prompts after acknowledging this residual",
+        503,
+        false
+      );
+    }
+  }
+
+  async readCliVersion(signal?: AbortSignal): Promise<string> {
+    return this.exec([
+      this.config.limactl, "shell", this.config.instance, "--",
+      "sudo", "-u", GUEST_SUPERVISOR, "-H", "--",
+      "env", `CODEX_HOME=${GUEST_CODEX_HOME}`, `PATH=${GUEST_APP_SERVER_PATH}`, "NO_COLOR=1", "TERM=dumb",
+      this.config.guestCodexCommand, "--version"
+    ], 10_000, signal);
+  }
+
+  async copySnapshot(hostPath: string, signal?: AbortSignal): Promise<{ guestPath: string; cleanup: () => Promise<void> }> {
     const guestPath = `${GUEST_SNAPSHOT_ROOT}/${randomUUID()}`;
     const cleanup = async () => {
       await this.exec([
@@ -72,20 +101,20 @@ export class LimaClient {
       await this.exec([
         this.config.limactl, "shell", this.config.instance, "--",
         "sudo", "mkdir", "-p", guestPath
-      ], 30_000);
-      await this.pipeTar(hostPath, guestPath);
+      ], 30_000, signal);
+      await this.pipeTar(hostPath, guestPath, 60_000, signal);
       await this.exec([
         this.config.limactl, "shell", this.config.instance, "--",
         "sudo", "chown", "-R", `root:${GUEST_SUPERVISOR}`, guestPath
-      ], 30_000);
+      ], 30_000, signal);
       await this.exec([
         this.config.limactl, "shell", this.config.instance, "--",
         "sudo", "chmod", "0711", GUEST_SNAPSHOT_ROOT
-      ], 30_000);
+      ], 30_000, signal);
       await this.exec([
         this.config.limactl, "shell", this.config.instance, "--",
         "sudo", "chmod", "-R", "u=rx,g=rx,o=", guestPath
-      ], 30_000);
+      ], 30_000, signal);
     } catch (error) {
       await cleanup();
       throw error;
@@ -112,8 +141,12 @@ export class LimaClient {
     }
   }
 
-  private pipeTar(hostPath: string, guestPath: string, timeoutMs = 60_000): Promise<void> {
+  private pipeTar(hostPath: string, guestPath: string, timeoutMs = 60_000, signal?: AbortSignal): Promise<void> {
     return new Promise((resolve, reject) => {
+      if (signal?.aborted) {
+        reject(signal.reason ?? new Error("Aborted"));
+        return;
+      }
       const env = buildLimaHostEnvironment(process.env);
       const tar = spawn("tar", ["-C", hostPath, "-cf", "-", "."], {
         env,
@@ -140,6 +173,7 @@ export class LimaClient {
         if (settled) return;
         settled = true;
         clearTimeout(timer);
+        signal?.removeEventListener("abort", onAbort);
         tar.kill("SIGKILL");
         lima.kill("SIGKILL");
         lima.stdin?.destroy();
@@ -151,6 +185,8 @@ export class LimaClient {
         if (tarCode === 0 && limaCode === 0) finish();
         else finish(snapshotError());
       };
+      const onAbort = () => finish(signal?.reason instanceof Error ? signal.reason : new Error("Aborted"));
+      signal?.addEventListener("abort", onAbort, { once: true });
       const timer = setTimeout(() => finish(snapshotError()), timeoutMs);
       timer.unref();
       lima.on("error", () => finish(new GatewayError("CODEX_NOT_CONFIGURED", "The Lima Codex instance is not running", 503, false)));
@@ -166,12 +202,16 @@ export class LimaClient {
     });
   }
 
-  private exec(argv: string[], timeoutMs: number): Promise<string> {
+  private exec(argv: string[], timeoutMs: number, signal?: AbortSignal): Promise<string> {
     const [command, ...args] = argv;
     if (!command) {
       return Promise.reject(new GatewayError("CODEX_NOT_CONFIGURED", "The Lima Codex instance is not running", 503, false));
     }
     return new Promise((resolve, reject) => {
+      if (signal?.aborted) {
+        reject(signal.reason ?? new Error("Aborted"));
+        return;
+      }
       const child = spawn(command, args, {
         env: buildLimaHostEnvironment(process.env),
         stdio: ["ignore", "pipe", "pipe"]
@@ -179,6 +219,11 @@ export class LimaClient {
       let stdout = "";
       let stdoutBytes = 0;
       let settled = false;
+      const onAbort = () => finish(() => {
+        child.kill("SIGKILL");
+        reject(signal?.reason ?? new Error("Aborted"));
+      });
+      signal?.addEventListener("abort", onAbort, { once: true });
       const timer = setTimeout(() => finish(() => {
         child.kill("SIGKILL");
         reject(new GatewayError("CODEX_NOT_CONFIGURED", "The Lima Codex instance is not running", 503, false));
@@ -188,6 +233,7 @@ export class LimaClient {
         if (settled) return;
         settled = true;
         clearTimeout(timer);
+        signal?.removeEventListener("abort", onAbort);
         action();
       };
       child.stdout?.on("data", (chunk: Buffer) => {

@@ -33,8 +33,9 @@
 - [x] Define a conservative Renovate policy with no automerge
 - [x] Codex CLI version pin and App Server contract checks (`CODEX_UNSUPPORTED_VERSION`)
 - [x] Select Lima (`vz`) and implement the opt-in executor (`CODEXGW_CODEX_EXECUTOR=lima`)
+- [x] Guest `bwrap` wrapper, hostname-resolved egress, and fail-closed isolation probe
 - [ ] Verify real Codex login and structured runs inside that boundary
-- [ ] Prove guest tool subprocesses cannot read `CODEX_HOME`
+- [ ] Prove a real Codex tool subprocess cannot read `CODEX_HOME`
 - [ ] Migrate the installed service only after backup and rollback rehearsal
 
 ## Deferred Backlog
@@ -49,11 +50,11 @@ These are explicit follow-up projects, not omissions from the current hardening 
 
 ## Blockers
 
-- Live Lima acceptance evidence, guest tool isolation, and LaunchAgent migration still require operator-run VM work. The default executor remains `host`.
+- Live Lima acceptance evidence and LaunchAgent migration still require operator-run VM work. The default executor remains `host`.
 
 ## Next Step
 
-- Create the Lima instance from `scripts/lima/codexgw.yaml`, authenticate the guest Codex home, and record the acceptance suite before treating untrusted prompts or repositories as supported.
+- Create the Lima instance from `scripts/lima/codexgw.yaml`, run `scripts/lima/install-guest-helpers.sh` and `scripts/lima/accept.sh`, authenticate the guest Codex home, and record live coding/inference evidence before treating untrusted prompts or repositories as supported.
 
 ## Checkpoints
 
