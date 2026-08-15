@@ -23,8 +23,8 @@
 - Risk: A Codex CLI update may change JSON-RPC behavior or schemas beyond current normalization tests.
 - Impact: Readiness or jobs may fail after an operator upgrade.
 - Likelihood: Medium over the service lifetime.
-- Mitigation: Pin the deployed Codex CLI operationally, retain fake-server contract tests, and add generated-schema/version compatibility checks before automatic upgrades.
-- Status: Open.
+- Mitigation: `/readyz` and each turn fail closed outside `SUPPORTED_CODEX_CLI_RANGE`. Fake-server contract tests lock the initialize payload and method surface. Bump the range only after verification. Generated App Server schemas remain a follow-up.
+- Status: Mitigated for the pinned range; still open for untested newer CLIs.
 
 ## Closed Risks
 

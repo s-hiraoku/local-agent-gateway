@@ -1,7 +1,28 @@
 #!/usr/bin/env node
+import { appendFileSync, readFileSync } from "node:fs";
+import { join } from "node:path";
 import { createInterface } from "node:readline";
 
+function sidecar(name, fallback = "") {
+  try {
+    return readFileSync(join(process.env.CODEX_HOME ?? "", name), "utf8").trim();
+  } catch {
+    return fallback;
+  }
+}
+
+if (process.argv.includes("--version")) {
+  process.stdout.write(`codex-cli ${sidecar("fake-version", "0.144.6")}\n`);
+  process.exit(0);
+}
+
 const lines = createInterface({ input: process.stdin });
+const transcript = sidecar("fake-transcript-path");
+
+function record(message) {
+  if (!transcript || typeof message.method !== "string") return;
+  appendFileSync(transcript, `${JSON.stringify({ method: message.method, params: message.params ?? null })}\n`);
+}
 
 function send(message) {
   process.stdout.write(`${JSON.stringify(message)}\n`);
@@ -22,9 +43,26 @@ function example(schema) {
 
 lines.on("line", (line) => {
   const message = JSON.parse(line);
+  record(message);
   if (message.method === "initialized") return;
   if (message.method === "initialize") {
-    send({ id: message.id, result: { userAgent: "fake" } });
+    const client = message.params?.clientInfo ?? {};
+    if (client.name !== "local-agent-gateway" || message.params?.capabilities?.experimentalApi !== false) {
+      send({ id: message.id, error: { code: -32602, message: "initialize contract mismatch" } });
+      return;
+    }
+    if (sidecar("fake-initialize") === "missing-user-agent") {
+      send({ id: message.id, result: { platformFamily: "unix" } });
+      return;
+    }
+    send({
+      id: message.id,
+      result: {
+        userAgent: `codex_cli_rs/${sidecar("fake-version", "0.144.6")}`,
+        platformFamily: "unix",
+        platformOs: "macos"
+      }
+    });
     return;
   }
   if (message.method === "account/read") {

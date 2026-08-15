@@ -387,6 +387,8 @@ function jobError(job: PublicJob): GatewayError {
       return new GatewayError("CODEX_RATE_LIMITED", message, 429, retryable);
     case "CODEX_UNAUTHORIZED":
       return new GatewayError("CODEX_UNAUTHORIZED", message, 503, retryable);
+    case "CODEX_UNSUPPORTED_VERSION":
+      return new GatewayError("CODEX_UNSUPPORTED_VERSION", message, 503, retryable);
     case "CODEX_OVERLOADED":
       return new GatewayError("CODEX_OVERLOADED", message, 503, retryable);
     case "CODEX_TIMEOUT":

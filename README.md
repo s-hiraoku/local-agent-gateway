@@ -38,7 +38,7 @@ V2 is a production-shaped foundation, not production-ready for untrusted users o
 
 - Node.js 26 (`.node-version` pins the preferred patch)
 - pnpm 11.13
-- a current Codex CLI with App Server support
+- a current Codex CLI with App Server support, pinned inside the range in `src/adapters/codex/compatibility.ts` (currently 0.128.0–0.149.99)
 - a dedicated `CODEX_HOME` authenticated with the intended ChatGPT/Codex account
 
 The dedicated home must not contain `config.toml`; Gateway startup rejects it to prevent accidental MCP or personal configuration inheritance.
@@ -50,7 +50,7 @@ mkdir -p "$HOME/.codex-gateway"
 CODEX_HOME="$HOME/.codex-gateway" codex login
 ```
 
-`GET /readyz` starts an App Server health probe and reports ready only when this home contains a ChatGPT account login. API-key-backed Codex sessions are intentionally rejected because coding is meant to use the ChatGPT/Codex subscription boundary.
+`GET /readyz` starts an App Server health probe and reports ready only when the Codex CLI version is inside the supported range and this home contains a ChatGPT account login. An unsupported or unreadable CLI version fails closed with `CODEX_UNSUPPORTED_VERSION`. API-key-backed Codex sessions are intentionally rejected because coding is meant to use the ChatGPT/Codex subscription boundary.
 
 Install and verify:
 
