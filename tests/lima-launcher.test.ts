@@ -246,10 +246,10 @@ describe("Lima executor contract", () => {
     chmodSync(real, 0o755);
     const injected = spawnSync(wrapper, ["--ro-bind", "/", "/", "--", "/bin/cat", "/secret"], { encoding: "utf8" });
     expect(injected.status).toBe(0);
-    expect(injected.stdout).toContain("--tmpfs /var/lib/codexgw/home");
-    expect(injected.stdout.indexOf("--tmpfs /var/lib/codexgw/home"))
+    expect(injected.stdout).toContain("--tmpfs\n/var/lib/codexgw/home");
+    expect(injected.stdout.indexOf("--tmpfs\n/var/lib/codexgw/home"))
       .toBeGreaterThan(injected.stdout.indexOf("--ro-bind"));
-    expect(injected.stdout).toMatch(/--unsetenv CODEX_HOME\n--\n\/bin\/cat/);
+    expect(injected.stdout).toMatch(/--unsetenv\nCODEX_HOME\n--unsetenv\nOPENAI_API_KEY\n--\n\/bin\/cat/);
     const rejected = spawnSync(wrapper, ["/bin/true"], { encoding: "utf8" });
     expect(rejected.status).not.toBe(0);
   });

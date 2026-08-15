@@ -8,7 +8,6 @@ import {
   parseCodexVersion,
   unsupportedCodexVersionError
 } from "./compatibility.js";
-import { buildCodexEnvironment } from "./environment.js";
 import { hostAppServerLauncher, type AppServerLauncher } from "./launcher.js";
 import { BufferedJsonRpcTransport, CodexRpcError } from "./json-rpc.js";
 import type { CodingRunInput, CodingRunResult, CodingRunner } from "../runner.js";
