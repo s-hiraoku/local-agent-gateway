@@ -56,6 +56,30 @@ describe("loadConfig", () => {
     })).toThrow(/true or false/);
   });
 
+  it("defaults the Codex executor to host and accepts lima", () => {
+    expect(loadConfig(validEnv()).codexExecutor).toBe("host");
+    expect(loadConfig(validEnv()).limaCommand).toBe("limactl");
+    expect(loadConfig(validEnv()).limaInstance).toBe("codexgw");
+    expect(loadConfig({
+      ...validEnv(),
+      CODEXGW_CODEX_EXECUTOR: "lima",
+      CODEXGW_LIMA_COMMAND: "/opt/lima/bin/limactl",
+      CODEXGW_LIMA_INSTANCE: "codexgw-dev"
+    })).toMatchObject({
+      codexExecutor: "lima",
+      limaCommand: "/opt/lima/bin/limactl",
+      limaInstance: "codexgw-dev"
+    });
+    expect(() => loadConfig({
+      ...validEnv(),
+      CODEXGW_CODEX_EXECUTOR: "docker"
+    })).toThrow(/'host' or 'lima'/);
+    expect(() => loadConfig({
+      ...validEnv(),
+      CODEXGW_LIMA_INSTANCE: "Bad Instance"
+    })).toThrow(/lowercase letters, digits, _ or -/);
+  });
+
   it("defaults the inference provider to codex and accepts claude", () => {
     expect(loadConfig(validEnv()).inferenceProvider).toBe("codex");
     expect(loadConfig({

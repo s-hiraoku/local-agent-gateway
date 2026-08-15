@@ -1,5 +1,13 @@
 # Decisions
 
+## 2026-08-15: Opt-in Lima executor for the first readable-root milestone
+
+- Decision: Add `CODEXGW_CODEX_EXECUTOR=lima` as an opt-in Codex executor. One long-lived Lima `vz` VM runs Codex only. Gateway, SQLite, and secrets stay on the host. Each job copies a read-only snapshot over `limactl shell` stdio. The default executor remains `host`.
+- Context: Issue #33 required explicit operator choices before implementation. The existing LaunchAgent must not break.
+- Alternatives considered: Defaulting the LaunchAgent to Lima, mounting the host repository read-only, exposing a client-selected VM or command, and treating two guest users as a completed credential boundary.
+- Rationale: A copied snapshot avoids host-parent mounts. Lima SSH stdio reuses the existing App Server contract. Keeping `host` as the default preserves the installed service. Two guest users are reserved, but App Server still runs as the supervisor until tool isolation is proven.
+- Consequences: Host/Gateway files are out of the guest filesystem when Lima is enabled. Malicious prompts remain out of scope until tool subprocesses cannot read guest `CODEX_HOME` and hostname-pinned egress is proven. Recreating the VM requires a guest `codex login`. Live acceptance evidence is still required before LaunchAgent migration.
+
 ## 2026-07-18: Use a VM for the readable-root security boundary
 
 - Decision: Treat a split host control plane and dedicated VM executor as the target confidentiality boundary. Gateway secrets and SQLite remain outside the executor; the VM receives only Codex App Server traffic, its dedicated authentication state, one repository, and disposable inference storage.

@@ -364,7 +364,7 @@ Before the interface is enabled for untrusted prompts, verification MUST demonst
 - invoke shell, network, MCP, or approval-requiring operations;
 - cause raw local paths or internal protocol data to appear in output.
 
-The current read-only sandbox prevents mutation but is not proof of readable-root isolation. Until the OS-account, container, or VM boundary in [Readable-root isolation](READABLE_ROOT_ISOLATION.md) is implemented and verified, the compatibility interface is limited to explicitly enabled, trusted local clients and trusted input. It MUST NOT be exposed to untrusted users or prompts.
+The current read-only sandbox prevents mutation but is not proof of readable-root isolation. An opt-in Lima executor exists; the default LaunchAgent still runs Codex on the host, and the acceptance suite in [Readable-root isolation](READABLE_ROOT_ISOLATION.md) is not complete. The compatibility interface remains limited to explicitly enabled, trusted local clients and trusted input. It MUST NOT be exposed to untrusted users or prompts.
 
 This project does not claim that a ChatGPT/Codex subscription is contractually interchangeable with OpenAI Platform API usage. Operators are responsible for applicable account terms and MUST NOT use this single-owner interface for resale, account pooling, or an untrusted public service.
 

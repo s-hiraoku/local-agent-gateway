@@ -13,6 +13,13 @@ Use this file to record meaningful verification runs.
 
 ## Runs
 
+### 2026-08-15
+
+- Command: `volta run --node 26.3.1 --pnpm 11.13.0 bash scripts/verify.sh`; `volta run --node 26.3.1 --pnpm 11.13.0 pnpm smoke`
+- Scope: Opt-in Lima readable-root executor (Issue #33)
+- Result: Passed
+- Notes: 13 files / 122 tests. Lint, typecheck, build, policy, and local-production shell syntax passed. Smoke passed. Coverage includes fake-`limactl` snapshot copy, stopped/missing instance handling, host-secret allowlisting, and guest-path redaction. Live Lima VM acceptance evidence is not part of this run.
+
 ### 2026-05-05 11:11
 
 - Command: `npm run typecheck`

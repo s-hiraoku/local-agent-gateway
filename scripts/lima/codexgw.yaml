@@ -1,0 +1,85 @@
+# Lima instance for Local Agent Gateway coding execution.
+# plain: true disables default HOME mounts, guest agent, and containerd.
+# Create once: limactl start --name=codexgw scripts/lima/codexgw.yaml
+# Install a pinned Codex CLI on the guest PATH, then authenticate:
+# limactl shell codexgw -- sudo -u codexgw -H env CODEX_HOME=/var/lib/codexgw/home codex login
+
+minimumLimaVersion: "1.0.0"
+vmType: vz
+plain: true
+cpus: 2
+memory: "4GiB"
+disk: "20GiB"
+rosetta:
+  enabled: false
+containerd:
+  system: false
+  user: false
+ssh:
+  localPort: 0
+  loadDotSSHPubKeys: false
+  forwardAgent: false
+  forwardX11: false
+  forwardX11Trusted: false
+mounts: []
+networks: []
+images:
+- location: "https://cloud-images.ubuntu.com/releases/24.04/release/ubuntu-24.04-server-cloudimg-arm64.img"
+  arch: "aarch64"
+- location: "https://cloud-images.ubuntu.com/releases/24.04/release/ubuntu-24.04-server-cloudimg-amd64.img"
+  arch: "x86_64"
+provision:
+- mode: system
+  script: |
+    #!/bin/bash
+    set -euxo pipefail
+    export DEBIAN_FRONTEND=noninteractive
+    if command -v apt-get >/dev/null 2>&1; then
+      apt-get update -qq
+      apt-get install -y --no-install-recommends nftables
+    fi
+    if ! id -u codexgw >/dev/null 2>&1; then
+      useradd --system --home /var/lib/codexgw/home --shell /usr/sbin/nologin --create-home codexgw
+    fi
+    if ! id -u codexgw-tool >/dev/null 2>&1; then
+      useradd --system --home /var/lib/codexgw/tool --shell /usr/sbin/nologin --create-home codexgw-tool
+    fi
+    mkdir -p /var/lib/codexgw/home /var/lib/codexgw/snapshots /var/lib/codexgw/tool
+    chown -R codexgw:codexgw /var/lib/codexgw/home
+    chmod 700 /var/lib/codexgw/home
+    chown root:root /var/lib/codexgw/snapshots
+    chmod 0711 /var/lib/codexgw/snapshots
+    chown -R codexgw-tool:codexgw-tool /var/lib/codexgw/tool
+    chmod 700 /var/lib/codexgw/tool
+    if [ -f /var/lib/codexgw/home/config.toml ]; then
+      echo "guest CODEX_HOME must not contain config.toml" >&2
+      exit 1
+    fi
+    if ! command -v nft >/dev/null 2>&1; then
+      echo "nftables is required for the guest egress policy" >&2
+      exit 1
+    fi
+    nft -f - <<'NFT'
+    flush ruleset
+    table inet filter {
+      chain input {
+        type filter hook input priority 0; policy drop;
+        iif lo accept
+        ct state established,related accept
+        tcp dport 22 accept
+      }
+      chain forward {
+        type filter hook forward priority 0; policy drop;
+      }
+      chain output {
+        type filter hook output priority 0; policy drop;
+        oif lo accept
+        ct state established,related accept
+        ip daddr { 10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16, 169.254.0.0/16 } drop
+        ip6 daddr { fc00::/7, fe80::/10 } drop
+        udp dport 53 accept
+        tcp dport 53 accept
+        tcp dport 443 accept
+      }
+    }
+    NFT

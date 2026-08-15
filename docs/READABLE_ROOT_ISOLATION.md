@@ -2,7 +2,16 @@
 
 ## Status
 
-This is the required design for a future confidentiality boundary. It is not implemented by the current macOS LaunchAgent. Until the acceptance tests below pass, the Gateway supports only trusted clients, prompts, and repositories.
+Operator choices for the first VM milestone are recorded below. An opt-in Lima executor copies one repository snapshot into a dedicated guest and starts Codex App Server over `limactl shell` stdio. The default executor remains the host process so the existing LaunchAgent is unchanged.
+
+This milestone isolates host and Gateway assets from the Codex process. It is not a completed confidentiality boundary:
+
+- the default LaunchAgent still runs Codex on the host;
+- guest tool subprocesses still run as the credential-owning supervisor, so they can read `CODEX_HOME` until that inner denial is proven;
+- guest egress allows any public HTTPS (TCP 443) after private ranges are denied; hostname pinning is a residual;
+- live VM acceptance evidence is not yet recorded.
+
+Until the acceptance tests below pass, the Gateway supports only trusted clients, prompts, and repositories.
 
 ## Security objective
 
@@ -31,6 +40,23 @@ The executor still contains the dedicated Codex authentication state needed by A
 
 Guest networking must also fail closed. The host-to-guest App Server transport must be private and mutually authenticated. The guest must not reach the host control-plane listener, Keychain services, metadata endpoints, or other private networks. Outbound internet access must be denied by default or restricted to the minimum documented endpoints required for Codex operation; the acceptance evidence must record the effective policy. Otherwise any guest-readable credential remains exfiltratable even when host mounts are absent.
 
+## Recorded operator decisions
+
+These choices were made for issue #33. They are not inferred from ordinary repository maintenance.
+
+| Topic | Decision |
+| --- | --- |
+| VM | One long-lived Lima `vz` instance. Gateway, SQLite, and secrets stay on the host. The guest runs Codex only. |
+| Transport | Lima SSH + stdio (`limactl shell` → `codex app-server`). Clients cannot pick the command, path, or VM. |
+| Repositories | Per-job read-only snapshot copy into the guest. No host-parent mount. |
+| Network | Deny by default. Block RFC1918, link-local, and metadata ranges. Allow DNS and TCP 443. Hostname pinning remains a residual. |
+| Credentials | Two guest users (`codexgw` owns `CODEX_HOME`; `codexgw-tool` is reserved for tools). App Server currently runs as the supervisor, so tool isolation is not proven. |
+| Auth backup | Guest `CODEX_HOME` stays in the VM. Host backup remains the database and Keychain. Recreating the VM requires `codex login` in the guest. |
+| CLI pin | Bump the guest CLI only together with the supported host Codex CLI range. |
+| Default | Executor `host` so the existing LaunchAgent does not break. Lima is opt-in through `CODEXGW_CODEX_EXECUTOR=lima`. |
+
+Runtime model: one long-lived Lima VM; one App Server process and one snapshot per job; delete the snapshot after the turn. Snapshot directories are group-readable only (`u=rx,g=rx,o=`) under a non-listable `/var/lib/codexgw/snapshots` (`0711`). Sibling isolation still depends on unguessable snapshot names while App Server shares the `codexgw` identity.
+
 ## Controls that do not satisfy the objective
 
 - `cwd` selection or string path validation;
@@ -46,14 +72,23 @@ These remain useful defense in depth, but none proves that unrelated readable ho
 
 ## Provisioning sequence
 
-1. Select and pin a VM runtime, guest image, mutually authenticated App Server transport, and deny-by-default network policy. Record their versions and update policy.
-2. Install a pinned Codex CLI inside the guest; keep Gateway and SQLite on the host control plane.
-3. Create separate guest paths for `CODEX_HOME` and disposable inference workspaces with restrictive permissions and no host-parent mount.
-4. Authenticate the dedicated Codex home interactively inside the guest and verify that it contains no personal `config.toml` or MCP configuration.
-5. Copy or mount one test repository read-only. Do not expose a parent directory or the host checkout containing Gateway secrets.
-6. Add an executor adapter that starts only the fixed VM transport; clients must not select a command, guest path, or VM.
-7. Separate the credential-owning supervisor from the tool executor, scrub inherited environment/file descriptors, and prove that tool subprocesses cannot read `CODEX_HOME` before using real authentication with untrusted prompts.
-8. Run the remaining acceptance suite and a backup/restore rehearsal before migrating the resident service.
+1. Install Lima and create the pinned instance once from `scripts/lima/codexgw.yaml`. Do not auto-create the VM from `/readyz`.
+2. Install a pinned Codex CLI on the guest `PATH`. Keep Gateway and SQLite on the host control plane.
+3. Confirm guest paths: `CODEX_HOME=/var/lib/codexgw/home`, snapshots under `/var/lib/codexgw/snapshots`, no host-parent mount, and no guest `config.toml`.
+4. Authenticate interactively inside the guest as `codexgw`. Do not copy host authentication state.
+5. Set `CODEXGW_CODEX_EXECUTOR=lima`. The adapter starts only the fixed `limactl` transport; clients still select a public repository ID.
+6. Separate the credential-owning supervisor from the tool executor, scrub inherited environment/file descriptors, and prove that tool subprocesses cannot read `CODEX_HOME` before using real authentication with untrusted prompts.
+7. Run the remaining acceptance suite and a backup/restore rehearsal before migrating the resident LaunchAgent.
+
+Create and authenticate the instance:
+
+```bash
+limactl start --name=codexgw scripts/lima/codexgw.yaml
+# install a pinned Codex CLI on the guest PATH, then:
+limactl shell codexgw -- sudo -u codexgw -H env CODEX_HOME=/var/lib/codexgw/home codex login
+```
+
+If the named instance is missing, readiness fails closed with `CODEX_NOT_CONFIGURED`. A `Stopped` instance is started; the Gateway does not create a new VM.
 
 ## Acceptance tests
 
@@ -78,16 +113,11 @@ Use synthetic canary files rather than real credentials for denial tests. Store 
 
 Before migration, stop the current LaunchAgent and create a `gatewayctl backup`. Keep the current versioned release and Keychain items unchanged until the guest passes readiness and one live job. Switch clients only after health, authorization denial, and restore checks succeed.
 
-Rollback by stopping host port forwarding, restarting the existing LaunchAgent release, and verifying `/healthz` and `/readyz`. Do not delete the old database, Keychain items, or releases during the first migration. Database writes must never be active in both host and guest instances against the same files.
+Rollback by setting the executor back to `host`, restarting the existing LaunchAgent release, and verifying `/healthz` and `/readyz`. Do not delete the old database, Keychain items, or releases during the first migration. Database writes must never be active in both host and guest instances against the same files.
 
-## Operator decisions still required
+## Remaining residuals
 
-- VM runtime, lifecycle manager, and private mutually authenticated App Server transport;
-- the guest credential supervisor/auth broker and privilege-separation mechanism that hides Codex authentication from tool subprocesses;
-- the minimum Codex network allowlist and its enforcement point;
-- repository copy versus verified read-only mount;
-- guest secret storage and encrypted backup destination;
-- guest update cadence and Codex CLI pinning;
-- whether the residual operational cost is acceptable for the trusted-input deployment.
-
-Those choices affect host state and credentials and therefore require an explicit migration task; they must not be inferred from ordinary repository maintenance.
+- Prove that guest tool subprocesses cannot read `CODEX_HOME` while App Server authentication still works.
+- Replace public-HTTPS allowance with a hostname allowlist once the required Codex endpoints are known.
+- Wire Lima into the versioned LaunchAgent only after live acceptance evidence exists.
+- Record the acceptance-suite evidence in `codex/ledger/verification.md`.
