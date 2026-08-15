@@ -34,6 +34,22 @@ fi
 [[ "${OPENAI_COMPATIBILITY}" == "true" || "${OPENAI_COMPATIBILITY}" == "false" ]] \
   || fail "OpenAI compatibility configuration must be true or false"
 
+INFERENCE_PROVIDER="codex"
+if [[ -f "${CONFIG}/inference-provider" ]]; then
+  INFERENCE_PROVIDER="$(/bin/cat "${CONFIG}/inference-provider")"
+fi
+[[ "${INFERENCE_PROVIDER}" == "codex" || "${INFERENCE_PROVIDER}" == "claude" ]] \
+  || fail "inference provider configuration must be codex or claude"
+
+CLAUDE_COMMAND=""
+if [[ -f "${CONFIG}/claude-command" ]]; then
+  CLAUDE_COMMAND="$(/bin/cat "${CONFIG}/claude-command")"
+fi
+if [[ "${INFERENCE_PROVIDER}" == "claude" ]]; then
+  [[ -n "${CLAUDE_COMMAND}" ]] || fail "the claude inference provider requires a configured Claude executable"
+  [[ -x "${CLAUDE_COMMAND}" ]] || fail "configured Claude executable is unavailable"
+fi
+
 API_TOKEN="$(/usr/bin/security find-generic-password -a "${ACCOUNT}" -s "${LABEL}.api-token" -w)" \
   || fail "API token could not be read from the login Keychain"
 ENCRYPTION_KEY="$(/usr/bin/security find-generic-password -a "${ACCOUNT}" -s "${LABEL}.encryption-key" -w)" \
@@ -48,6 +64,13 @@ export CODEXGW_REPOSITORIES_JSON="$(/bin/cat "${CONFIG}/repositories.json")"
 export CODEXGW_CODEX_COMMAND="${CODEX_COMMAND}"
 export CODEXGW_CODEX_HOME="${CODEX_HOME}"
 export CODEXGW_OPENAI_COMPATIBILITY_ENABLED="${OPENAI_COMPATIBILITY}"
+export CODEXGW_INFERENCE_PROVIDER="${INFERENCE_PROVIDER}"
+if [[ -n "${CLAUDE_COMMAND}" ]]; then
+  export CODEXGW_CLAUDE_COMMAND="${CLAUDE_COMMAND}"
+fi
+if [[ -f "${CONFIG}/claude-model" ]]; then
+  export CODEXGW_CLAUDE_MODEL="$(/bin/cat "${CONFIG}/claude-model")"
+fi
 export LOG_LEVEL="info"
 export PATH="$(/usr/bin/dirname "${CODEX_COMMAND}"):${RELEASE}/runtime:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin"
 

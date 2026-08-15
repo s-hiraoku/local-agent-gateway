@@ -19,6 +19,8 @@ const config: GatewayConfig = {
   codexHome: "/tmp/codexgw-smoke",
   inferenceWorkspaceRoot: "/tmp/codexgw-smoke-inference",
   openaiCompatibilityEnabled: false,
+  inferenceProvider: "codex",
+  claudeCommand: "claude",
   maxQueuedJobs: 10,
   maxConcurrentJobs: 1,
   maxPromptBytes: 64 * 1024,
@@ -33,11 +35,12 @@ const runner: CodingRunner = {
   async run(input) {
     await input.onEvent({ type: "agent.message.delta", data: { delta: "ok" } });
     return { backendThreadId: "private-thread", result: "ok" };
-  }
+  },
+  async checkReady() { /* smoke fake is always ready */ }
 };
 const database = openDatabase(":memory:");
 const store = new GatewayStore(database.db, new SecretBox(config.encryptionKey));
-const processor = new JobProcessor(store, runner, config.repositories, 1, config.inferenceWorkspaceRoot);
+const processor = new JobProcessor(store, { coding: runner, inference: runner }, config.repositories, 1, config.inferenceWorkspaceRoot);
 const app = await buildApp({ config, store, processor, closeDatabase: database.close });
 await app.ready();
 

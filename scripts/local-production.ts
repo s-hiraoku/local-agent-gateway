@@ -353,6 +353,24 @@ async function install(): Promise<void> {
   if (openaiCompatibility !== "true" && openaiCompatibility !== "false") {
     throw new Error("--openai-compatibility must be true or false");
   }
+  // Inference turns may run on Claude Code instead of Codex. Coding turns are
+  // always Codex, so the Claude executable is only required when selected.
+  const existingSetting = (name: string): string | undefined => {
+    const versioned = join(base, "current", "config", name);
+    const legacy = join(base, "config", name);
+    const path = existsSync(versioned) ? versioned : legacy;
+    return existsSync(path) ? readFileSync(path, "utf8").trim() : undefined;
+  };
+  const inferenceProvider = option("--inference-provider") ?? existingSetting("inference-provider") ?? "codex";
+  if (inferenceProvider !== "codex" && inferenceProvider !== "claude") {
+    throw new Error("--inference-provider must be codex or claude");
+  }
+  // Resolved through `which` exactly like the Codex executable, so the launcher
+  // always receives an absolute path rather than relying on the service PATH.
+  const claudeCommand = option("--claude-command")
+    ?? existingSetting("claude-command")
+    ?? (inferenceProvider === "claude" ? commandPath("claude") : undefined);
+  const claudeModel = option("--claude-model") ?? existingSetting("claude-model");
 
   const worktreeStatus = execFileSync("/usr/bin/git", ["status", "--porcelain"], {
     cwd: projectRoot,
@@ -406,6 +424,9 @@ async function install(): Promise<void> {
     writePrivate(join(releaseConfig, "codex-command"), `${codexCommand}\n`);
     writePrivate(join(releaseConfig, "codex-home"), `${codexHome}\n`);
     writePrivate(join(releaseConfig, "openai-compatibility"), `${openaiCompatibility}\n`);
+    writePrivate(join(releaseConfig, "inference-provider"), `${inferenceProvider}\n`);
+    if (claudeCommand) writePrivate(join(releaseConfig, "claude-command"), `${claudeCommand}\n`);
+    if (claudeModel) writePrivate(join(releaseConfig, "claude-model"), `${claudeModel}\n`);
     writePrivate(join(staging, ".pending-activation"), "");
     renameSync(staging, release);
   } catch (error) {
@@ -457,7 +478,7 @@ const entrypoint = process.argv[1] ? realpathSync(process.argv[1]) : "";
 if (entrypoint === fileURLToPath(import.meta.url)) {
   const command = process.argv[2];
   if (command !== "install") {
-    console.error("usage: pnpm local:install -- [--repositories-json JSON] [--codex-home PATH] [--openai-compatibility true|false]");
+    console.error("usage: pnpm local:install -- [--repositories-json JSON] [--codex-home PATH] [--openai-compatibility true|false] [--inference-provider codex|claude] [--claude-command PATH] [--claude-model NAME]");
     process.exitCode = 2;
   } else {
     install().catch((error: unknown) => {

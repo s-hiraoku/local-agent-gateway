@@ -3,9 +3,14 @@ import { join } from "node:path";
 import { GatewayError, normalizeError } from "../domain/errors.js";
 import type { RepositoryTarget } from "../infrastructure/config.js";
 import type { JobRow } from "../infrastructure/database.js";
-import type { CodingRunner } from "../adapters/codex/runner.js";
+import type { CodingRunner } from "../adapters/runner.js";
 import { GatewayStore } from "./store.js";
 import { parseStructuredOutput } from "../domain/structured-output.js";
+
+export type JobRunners = {
+  coding: CodingRunner;
+  inference: CodingRunner;
+};
 
 export class JobProcessor {
   private readonly active = new Map<string, AbortController>();
@@ -17,7 +22,7 @@ export class JobProcessor {
 
   constructor(
     private readonly store: GatewayStore,
-    private readonly runner: CodingRunner,
+    private readonly runners: JobRunners,
     private readonly repositories: ReadonlyMap<string, RepositoryTarget>,
     private readonly maxConcurrent: number,
     private readonly inferenceWorkspaceRoot: string
@@ -126,8 +131,9 @@ export class JobProcessor {
       repositoryPath = repository.path;
     }
     try {
+      const runner = job.kind === "inference.turn" ? this.runners.inference : this.runners.coding;
       const outputSchema = this.store.decryptOutputSchema(job);
-      const result = await this.runner.run({
+      const result = await runner.run({
         repositoryPath,
         backendThreadId: await this.store.backendThreadId(job.conversationId),
         prompt: this.store.decryptPrompt(job),

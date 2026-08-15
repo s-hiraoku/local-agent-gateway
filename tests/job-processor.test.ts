@@ -20,7 +20,8 @@ afterEach(async () => {
 const idleRunner: CodingRunner = {
   async run() {
     return { backendThreadId: "thread", result: "ok" };
-  }
+  },
+  async checkReady() { /* ready */ }
 };
 
 describe("JobProcessor", () => {
@@ -37,7 +38,7 @@ describe("JobProcessor", () => {
     const database = openDatabase(":memory:");
     databases.push(database);
     const store = new GatewayStore(database.db, new SecretBox(Buffer.alloc(32, 3)));
-    const processor = new JobProcessor(store, idleRunner, new Map(), 1, root);
+    const processor = new JobProcessor(store, { coding: idleRunner, inference: idleRunner }, new Map(), 1, root);
     await processor.start();
     await processor.stop();
 
@@ -51,7 +52,7 @@ describe("JobProcessor", () => {
     const database = openDatabase(":memory:");
     databases.push(database);
     const store = new GatewayStore(database.db, new SecretBox(Buffer.alloc(32, 3)));
-    const processor = new JobProcessor(store, idleRunner, new Map(), 1, root);
+    const processor = new JobProcessor(store, { coding: idleRunner, inference: idleRunner }, new Map(), 1, root);
     await expect(processor.start()).resolves.toBeUndefined();
     await processor.stop();
   });

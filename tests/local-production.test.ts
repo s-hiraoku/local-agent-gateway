@@ -133,6 +133,15 @@ describe("local production installer", () => {
     expect(launcher).toContain('OPENAI_COMPATIBILITY="false"');
   });
 
+  it("defaults the inference provider to codex and requires a Claude executable when selected", () => {
+    const launcher = readFileSync(new URL("../scripts/local-production/launcher.sh", import.meta.url), "utf8");
+    expect(launcher).toContain('INFERENCE_PROVIDER="codex"');
+    expect(launcher).toContain('export CODEXGW_INFERENCE_PROVIDER="${INFERENCE_PROVIDER}"');
+    expect(launcher).toContain("inference provider configuration must be codex or claude");
+    expect(launcher).toContain("the claude inference provider requires a configured Claude executable");
+    expect(launcher).toContain('[[ -x "${CLAUDE_COMMAND}" ]]');
+  });
+
   it("waits for port 8787 to become available and rejects a persistent listener", async () => {
     let checks = 0;
     await waitUntilGatewayPortAvailable(100, 1, () => ++checks < 3);

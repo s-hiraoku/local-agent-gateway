@@ -20,6 +20,9 @@ export type GatewayConfig = {
   inferenceWorkspaceRoot: string;
   codexModel?: string;
   openaiCompatibilityEnabled: boolean;
+  inferenceProvider: "codex" | "claude";
+  claudeCommand: string;
+  claudeModel?: string;
   maxQueuedJobs: number;
   maxConcurrentJobs: number;
   maxPromptBytes: number;
@@ -135,6 +138,11 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): GatewayConfig 
       500
     );
   }
+  const inferenceProvider = (env.CODEXGW_INFERENCE_PROVIDER ?? "codex").trim();
+  if (inferenceProvider !== "codex" && inferenceProvider !== "claude") {
+    throw new GatewayError("INVALID_REQUEST", "CODEXGW_INFERENCE_PROVIDER must be 'codex' or 'claude'", 500);
+  }
+  const claudeModel = env.CODEXGW_CLAUDE_MODEL?.trim();
   return {
     host,
     port: positiveInteger(env.CODEXGW_PORT, 8787, "CODEXGW_PORT"),
@@ -147,6 +155,9 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): GatewayConfig 
     inferenceWorkspaceRoot,
     ...(model ? { codexModel: model } : {}),
     openaiCompatibilityEnabled,
+    inferenceProvider,
+    claudeCommand: env.CODEXGW_CLAUDE_COMMAND ?? "claude",
+    ...(claudeModel ? { claudeModel } : {}),
     maxQueuedJobs: positiveInteger(env.CODEXGW_MAX_QUEUED_JOBS, 100, "CODEXGW_MAX_QUEUED_JOBS"),
     maxConcurrentJobs: positiveInteger(env.CODEXGW_MAX_CONCURRENT_JOBS, 2, "CODEXGW_MAX_CONCURRENT_JOBS"),
     maxPromptBytes: positiveInteger(env.CODEXGW_MAX_PROMPT_BYTES, 64 * 1024, "CODEXGW_MAX_PROMPT_BYTES"),
