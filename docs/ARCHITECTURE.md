@@ -121,11 +121,7 @@ Usage records must keep subscription-backed coding separate from Platform API sp
 
 Dedicated-`CODEX_HOME` authentication, retention, and query-derived operational metrics are implemented for trusted local operation. The remaining sequence is:
 
-<<<<<<< HEAD
-1. Implement and prove the VM-based readable-root boundary in [Readable-root isolation design](READABLE_ROOT_ISOLATION.md).
-=======
 1. Prove the opt-in Lima readable-root boundary, including guest tool isolation and live acceptance evidence, in [Readable-root isolation design](READABLE_ROOT_ISOLATION.md).
->>>>>>> 9e3b903 (Add opt-in Lima executor for readable-root isolation)
 2. Codex CLI version/App Server contract checks, encrypted-payload key rotation, and rate-limit visibility in `/v2/metrics` are implemented.
 3. Implement write turns in isolated worktrees with patch/commit artifacts and no blind crash retry.
 4. Add encrypted artifact storage and bounded image generation/editing.
