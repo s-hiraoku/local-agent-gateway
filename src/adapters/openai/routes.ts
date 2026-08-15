@@ -385,6 +385,8 @@ function jobError(job: PublicJob): GatewayError {
   switch (code) {
     case "CODEX_RATE_LIMITED":
       return new GatewayError("CODEX_RATE_LIMITED", message, 429, retryable);
+    case "CLAUDE_RATE_LIMITED":
+      return new GatewayError("CLAUDE_RATE_LIMITED", message, 429, retryable);
     case "CODEX_UNAUTHORIZED":
       return new GatewayError("CODEX_UNAUTHORIZED", message, 503, retryable);
     case "CODEX_UNSUPPORTED_VERSION":

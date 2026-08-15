@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import { mkdtempSync, readFileSync, rmSync, writeFileSync, chmodSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { ClaudeHeadlessRunner } from "../src/adapters/claude/runner.js";
+import { ClaudeHeadlessRunner, mapClaudeInfo } from "../src/adapters/claude/runner.js";
 import { GatewayError } from "../src/domain/errors.js";
 
 const directories: string[] = [];
@@ -97,6 +97,19 @@ describe("ClaudeHeadlessRunner", () => {
     await expect(runnerFor(command).run(baseInput)).rejects.toMatchObject({
       code: "CLAUDE_UNAUTHORIZED"
     });
+  });
+
+  it("maps usage-limit envelopes to CLAUDE_RATE_LIMITED", async () => {
+    const { command } = fakeClaude(
+      `echo '{"type":"result","subtype":"error_during_execution","is_error":true,"result":"rate limit reached"}'`
+    );
+    await expect(runnerFor(command).run(baseInput)).rejects.toMatchObject({
+      code: "CLAUDE_RATE_LIMITED",
+      retryable: true,
+      statusCode: 429
+    });
+    expect(mapClaudeInfo("Too many requests")).toBe("CLAUDE_RATE_LIMITED");
+    expect(mapClaudeInfo("quota exceeded")).toBe("CLAUDE_RATE_LIMITED");
   });
 
   it("maps non-auth failures to CLAUDE_EXECUTION_FAILED", async () => {

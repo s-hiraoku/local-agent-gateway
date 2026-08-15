@@ -21,6 +21,7 @@
 - [x] Durable encrypted SQLite jobs, attempts, events, idempotency, and retention
 - [x] Bounded Codex App Server execution, cancellation, recovery, and SSE
 - [x] Authenticated SQLite-derived operational metrics
+- [x] Windowed rate-limit hits by backend in `/v2/metrics` (Issue #32)
 - [x] Restart-durable retention-sweep timestamp and deleted-row metrics (Issue #24)
 - [x] Transactional encryption-key rotation with a stored sentinel (Issue #31)
 - [x] Versioned macOS LaunchAgent deployment, backup, rollback, and Keychain secrets
