@@ -22,6 +22,7 @@
 - [x] Bounded Codex App Server execution, cancellation, recovery, and SSE
 - [x] Authenticated SQLite-derived operational metrics
 - [x] Restart-durable retention-sweep timestamp and deleted-row metrics (Issue #24)
+- [x] Transactional encryption-key rotation with a stored sentinel (Issue #31)
 - [x] Versioned macOS LaunchAgent deployment, backup, rollback, and Keychain secrets
 - [x] CI, smoke tests, policy checks, and local-production verification
 
@@ -37,7 +38,6 @@
 ## Deferred Backlog
 
 - Codex CLI generated-schema compatibility checks beyond the version pin
-- transactional encryption-key rotation
 - write-capable worktrees and patch/commit artifacts
 - image, audio, and realtime capability adapters
 - artifact retention and telemetry exporters

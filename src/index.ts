@@ -12,7 +12,8 @@ import { openDatabase } from "./infrastructure/database.js";
 const config = loadConfig();
 mkdirSync(config.inferenceWorkspaceRoot, { recursive: true, mode: 0o700 });
 const database = openDatabase(config.databasePath);
-const store = new GatewayStore(database.db, new SecretBox(config.encryptionKey), {
+const secrets = new SecretBox(config.encryptionKey);
+const store = new GatewayStore(database.db, secrets, {
   maxEventBytes: config.maxEventBytes,
   maxEventsPerJob: config.maxEventsPerJob,
   maxResultBytes: config.maxResultBytes
@@ -65,6 +66,7 @@ process.once("SIGINT", () => void shutdown("SIGINT"));
 process.once("SIGTERM", () => void shutdown("SIGTERM"));
 
 try {
+  await store.assertEncryptionKey();
   await app.listen({ host: config.host, port: config.port });
 } catch (error) {
   app.log.error(error);

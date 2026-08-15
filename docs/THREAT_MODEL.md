@@ -20,7 +20,7 @@ V2 currently protects a private, single-owner Gateway used by trusted external a
 - App Server uses private stdio, fixed methods, `approvalPolicy: never`, and read-only sandboxing;
 - child environment variables use an allowlist, excluding Gateway and OpenAI secrets;
 - a dedicated `CODEX_HOME` prevents accidental inheritance of the owner's normal MCP configuration;
-- prompts, results, and event data are authenticated-encrypted at rest;
+- prompts, results, and event data are authenticated-encrypted at rest with a versioned key id; a stored sentinel refuses startup when the configured key cannot decrypt;
 - idempotency and bounded resources reduce accidental or deliberate quota exhaustion;
 - App Server requests for approval or interactive tools are rejected.
 - OpenAI compatibility is disabled by default, loopback-only when enabled, authenticated with the Gateway token, and restricted to a server-fixed model alias and text fields.
