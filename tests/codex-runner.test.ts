@@ -1,4 +1,4 @@
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -81,6 +81,24 @@ describe("CodexAppServerRunner process contract", () => {
       approvalPolicy: "never",
       outputSchema: { type: "object" }
     });
+  });
+
+  it("cancels a slow CLI version probe before starting App Server", async () => {
+    const home = fakeHome({ "fake-version-delay-ms": "10000" });
+    const transcript = join(home, "transcript.jsonl");
+    writeFileSync(join(home, "fake-transcript-path"), transcript);
+    const controller = new AbortController();
+    const pending = runner(home).run({
+      repositoryPath: process.cwd(),
+      backendThreadId: null,
+      prompt: "review",
+      outputSchema: { type: "object", properties: { verdict: { type: "string" } }, required: ["verdict"] },
+      signal: controller.signal,
+      onEvent: async () => undefined
+    });
+    controller.abort();
+    await expect(pending).rejects.toMatchObject({ code: "CODEX_EXECUTION_FAILED" });
+    expect(existsSync(transcript) ? readFileSync(transcript, "utf8") : "").toBe("");
   });
 
   it("fails closed on an unsupported or unreadable Codex CLI version", async () => {

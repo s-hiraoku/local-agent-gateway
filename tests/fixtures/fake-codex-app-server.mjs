@@ -12,8 +12,13 @@ function sidecar(name, fallback = "") {
 }
 
 if (process.argv.includes("--version")) {
-  process.stdout.write(`codex-cli ${sidecar("fake-version", "0.144.6")}\n`);
-  process.exit(0);
+  const delayMs = Number(sidecar("fake-version-delay-ms", "0"));
+  const writeVersion = () => {
+    process.stdout.write(`codex-cli ${sidecar("fake-version", "0.144.6")}\n`);
+    process.exit(0);
+  };
+  if (delayMs > 0) setTimeout(writeVersion, delayMs);
+  else writeVersion();
 }
 
 const lines = createInterface({ input: process.stdin });

@@ -83,10 +83,15 @@ export class CodexAppServerRunner implements CodingRunner {
   }
 
   async run(input: CodingRunInput): Promise<CodingRunResult> {
-    await this.assertCliVersion();
-    const transport = this.createTransport();
+    let transport: BufferedJsonRpcTransport | undefined;
     try {
-      await this.initialize(transport);
+      await this.assertCliVersion(input.signal);
+      if (input.signal.aborted) {
+        throw input.signal.reason ?? new Error("Aborted");
+      }
+      const active = this.createTransport();
+      transport = active;
+      await this.initialize(active);
 
       const common = {
         cwd: input.repositoryPath,
@@ -95,17 +100,17 @@ export class CodexAppServerRunner implements CodingRunner {
         ...(this.config.model ? { model: this.config.model } : {})
       };
       const thread = input.backendThreadId
-        ? await transport.request<ThreadResponse>(CODEX_APP_SERVER_METHODS.threadResume, {
+        ? await active.request<ThreadResponse>(CODEX_APP_SERVER_METHODS.threadResume, {
             threadId: input.backendThreadId,
             ...common
           })
-        : await transport.request<ThreadResponse>(CODEX_APP_SERVER_METHODS.threadStart, {
+        : await active.request<ThreadResponse>(CODEX_APP_SERVER_METHODS.threadStart, {
             ...common,
             ephemeral: false,
             developerInstructions: "Operate read-only. Never request approval, network access, or filesystem writes."
           });
       const threadId = thread.thread.id;
-      const started = await transport.request<TurnResponse>(CODEX_APP_SERVER_METHODS.turnStart, {
+      const started = await active.request<TurnResponse>(CODEX_APP_SERVER_METHODS.turnStart, {
         threadId,
         input: [{ type: "text", text: input.prompt }],
         approvalPolicy: "never",
@@ -113,11 +118,11 @@ export class CodexAppServerRunner implements CodingRunner {
       });
       const turnId = started.turn.id;
       const interrupt = () => {
-        void transport.request(CODEX_APP_SERVER_METHODS.turnInterrupt, { threadId, turnId }).catch(() => undefined);
+        void active.request(CODEX_APP_SERVER_METHODS.turnInterrupt, { threadId, turnId }).catch(() => undefined);
       };
       input.signal.addEventListener("abort", interrupt, { once: true });
       try {
-        const result = await this.collectTurn(transport, threadId, turnId, input);
+        const result = await this.collectTurn(active, threadId, turnId, input);
         return { backendThreadId: threadId, result };
       } finally {
         input.signal.removeEventListener("abort", interrupt);
@@ -129,7 +134,7 @@ export class CodexAppServerRunner implements CodingRunner {
         : undefined;
       throw normalized;
     } finally {
-      transport.close();
+      transport?.close();
     }
   }
 
@@ -142,15 +147,19 @@ export class CodexAppServerRunner implements CodingRunner {
     });
   }
 
-  private async assertCliVersion(): Promise<void> {
-    const output = await this.readCliVersion();
+  private async assertCliVersion(signal?: AbortSignal): Promise<void> {
+    const output = await this.readCliVersion(signal);
     const version = parseCodexVersion(output);
     if (!version) throw unsupportedCodexVersionError();
     assertSupportedCodexVersion(version);
   }
 
-  private readCliVersion(): Promise<string> {
+  private readCliVersion(signal?: AbortSignal): Promise<string> {
     return new Promise((resolve, reject) => {
+      if (signal?.aborted) {
+        reject(signal.reason ?? new Error("Aborted"));
+        return;
+      }
       const child = spawn(this.config.command, ["--version"], {
         env: buildCodexEnvironment(process.env, this.config.codexHome),
         stdio: ["ignore", "pipe", "pipe"]
@@ -158,6 +167,11 @@ export class CodexAppServerRunner implements CodingRunner {
       let stdout = "";
       let stdoutBytes = 0;
       let settled = false;
+      const onAbort = () => finish(() => {
+        child.kill("SIGKILL");
+        reject(signal?.reason ?? new Error("Aborted"));
+      });
+      signal?.addEventListener("abort", onAbort, { once: true });
       const timer = setTimeout(() => finish(() => {
         child.kill("SIGKILL");
         reject(new GatewayError("CODEX_NOT_CONFIGURED", "Codex version probe timed out", 503, false));
@@ -167,6 +181,7 @@ export class CodexAppServerRunner implements CodingRunner {
         if (settled) return;
         settled = true;
         clearTimeout(timer);
+        signal?.removeEventListener("abort", onAbort);
         action();
       };
       child.stdout?.on("data", (chunk: Buffer) => {
