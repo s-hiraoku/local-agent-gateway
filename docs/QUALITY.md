@@ -26,7 +26,7 @@ Native dependency build scripts are denied by pnpm except for the version-locked
 - Active jobs receive cancellation on graceful shutdown; shutdown waits up to 30 seconds.
 - The latest successful retention-sweep timestamp and deleted-row counts survive Gateway restarts.
 
-Back up the encryption key separately from the database. There is no key rotation workflow yet. Losing the key loses stored payloads; exposing both key and database exposes them.
+Back up the encryption key separately from the database. Rotate it only while the Gateway is stopped, using `pnpm rotate-key` with `CODEXGW_DATA_ENCRYPTION_KEY_NEW`. Losing the key loses stored payloads; exposing both key and database exposes them. After rotation, discard the old key and treat existing `Idempotency-Key` hashes as new requests.
 
 ## Verification
 
@@ -55,6 +55,6 @@ CI repeats clean installation, lint, typecheck, tests, build, and harness verifi
 - Verify authentication expiry and logout behavior inside the selected boundary.
 - Keep the Codex CLI pin inside `SUPPORTED_CODEX_CLI_RANGE` after verifying a new CLI; generated version-specific App Server schemas remain a follow-up.
 - Exercise slow-consumer behavior with a real network client under production limits.
-- Implement transactional encrypted-payload key rotation and rehearse recovery after rotation.
+- Rehearse recovery after an encryption-key rotation on the installed service, including Keychain replacement.
 
 Until those gates pass, the service is suitable only for trusted clients, a dedicated local service identity, and trusted repositories.

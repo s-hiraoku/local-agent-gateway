@@ -3,7 +3,11 @@ import { GatewayError } from "../domain/errors.js";
 import type { GatewayMetrics, JobStatus, PublicEvent, PublicJob } from "../domain/jobs.js";
 import { newId } from "../domain/ids.js";
 import type { GatewayDatabase, JobKind, JobRow } from "../infrastructure/database.js";
-import { SecretBox } from "../infrastructure/crypto.js";
+import {
+  ENCRYPTION_SENTINEL_CONTEXT,
+  ENCRYPTION_SENTINEL_PLAINTEXT,
+  SecretBox
+} from "../infrastructure/crypto.js";
 import type { OutputSchema } from "../domain/structured-output.js";
 
 type DatabaseExecutor = Kysely<GatewayDatabase> | Transaction<GatewayDatabase>;
@@ -43,8 +47,27 @@ export class GatewayStore {
   ) {}
 
   async isReady(): Promise<boolean> {
+    await this.assertEncryptionKey();
     await sql`select 1`.execute(this.db);
     return true;
+  }
+
+  async assertEncryptionKey(): Promise<void> {
+    const metadata = await this.db.selectFrom("gatewayMetadata").selectAll().where("id", "=", 1).executeTakeFirstOrThrow();
+    if (!metadata.encryptionSentinel) {
+      await this.db.updateTable("gatewayMetadata").set({
+        encryptionSentinel: this.secrets.encrypt(ENCRYPTION_SENTINEL_PLAINTEXT, ENCRYPTION_SENTINEL_CONTEXT)
+      }).where("id", "=", 1).execute();
+      return;
+    }
+    const plaintext = this.secrets.decrypt(metadata.encryptionSentinel, ENCRYPTION_SENTINEL_CONTEXT);
+    if (plaintext !== ENCRYPTION_SENTINEL_PLAINTEXT) {
+      throw new GatewayError(
+        "ENCRYPTION_KEY_MISMATCH",
+        "The data encryption key cannot decrypt stored payloads",
+        500
+      );
+    }
   }
 
   async recoverInterruptedJobs(): Promise<number> {
@@ -361,7 +384,8 @@ export class GatewayStore {
         id: 1,
         retentionLastRunAt: runAt,
         retentionLastPrunedJobs: pruned.jobs,
-        retentionLastPrunedConversations: pruned.conversations
+        retentionLastPrunedConversations: pruned.conversations,
+        encryptionSentinel: null
       }).onConflict((conflict) => conflict.column("id").doUpdateSet({
         retentionLastRunAt: runAt,
         retentionLastPrunedJobs: pruned.jobs,

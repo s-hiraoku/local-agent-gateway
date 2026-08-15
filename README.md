@@ -74,7 +74,7 @@ Required environment variables:
 | Variable | Purpose |
 | --- | --- |
 | `CODEXGW_API_TOKEN` | Single-owner bearer token, at least 32 characters. |
-| `CODEXGW_DATA_ENCRYPTION_KEY` | Exactly 32 random bytes encoded as base64. Losing it makes stored payloads unrecoverable. |
+| `CODEXGW_DATA_ENCRYPTION_KEY` | Exactly 32 random bytes encoded as base64. Losing it makes stored payloads unrecoverable. Stop the service and run `pnpm rotate-key` with `CODEXGW_DATA_ENCRYPTION_KEY_NEW` to rotate. |
 | `CODEXGW_REPOSITORIES_JSON` | Server-side repository registry such as `[{"id":"gateway","path":"/absolute/repo"}]`. |
 
 Important optional variables:

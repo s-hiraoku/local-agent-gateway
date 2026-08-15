@@ -18,6 +18,7 @@ export type GatewayErrorCode =
   | "CLAUDE_TIMEOUT"
   | "CLAUDE_EXECUTION_FAILED"
   | "STRUCTURED_OUTPUT_INVALID"
+  | "ENCRYPTION_KEY_MISMATCH"
   | "INTERNAL_ERROR";
 
 export class GatewayError extends Error {

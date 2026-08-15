@@ -15,8 +15,8 @@
 - Risk: Encrypted SQLite payloads depend on one long-lived Keychain key.
 - Impact: Losing the key makes stored payloads unavailable; exposing the key with the database exposes them.
 - Likelihood: Low in normal local operation, with high recovery impact.
-- Mitigation: Keep an encrypted recovery copy separate from the database and use bounded retention. Design transactional re-encryption before rotation is required.
-- Status: Open; accepted for trusted single-owner operation.
+- Mitigation: `pnpm rotate-key` re-encrypts payloads and the sentinel in one SQLite transaction. Startup decrypts the sentinel and fails closed on a mismatched key. Keep an encrypted recovery copy of the current key separate from the database.
+- Status: Mitigated; operator must stop the service and replace the Keychain item after rotation.
 
 ### 2026-07-18: Codex App Server protocol compatibility is not pinned
 

@@ -196,3 +196,18 @@ Restore by uninstalling or stopping the service, restoring
 `gateway-v2.sqlite`, restoring the matching encryption key to Keychain, and
 starting the service. Do not copy a live SQLite database or omit its WAL state;
 use `gatewayctl backup` for normal backups.
+
+To rotate the encryption key, stop the service, keep a backup, then:
+
+```bash
+CODEXGW_DATABASE_PATH="$HOME/Library/Application Support/local-agent-gateway/data/gateway-v2.sqlite" \
+CODEXGW_DATA_ENCRYPTION_KEY="<current-key>" \
+CODEXGW_DATA_ENCRYPTION_KEY_NEW="$(openssl rand -base64 32)" \
+pnpm rotate-key
+```
+
+Replace the Keychain encryption-key item with the new value before starting the
+service. Discard the old key after `/readyz` succeeds. A mismatched key fails
+startup with `ENCRYPTION_KEY_MISMATCH` instead of failing per row. Rotation
+rewrites idempotency hashes' underlying key, so reusing an `Idempotency-Key`
+after rotation starts a new job.
