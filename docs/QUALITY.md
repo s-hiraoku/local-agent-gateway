@@ -15,7 +15,7 @@ Native dependency build scripts are denied by pnpm except for the version-locked
 - API submission is idempotent when clients preserve `Idempotency-Key`.
 - Stateless run conversation creation and submission are one transaction.
 - Structured results are exact-JSON parsed and locally schema-validated before completion.
-- `/readyz` probes App Server and requires a dedicated ChatGPT login.
+- `/readyz` probes App Server, requires a dedicated ChatGPT login, and fails closed when the Codex CLI version is outside the supported range.
 - Coding execution is at-least-once across Gateway crashes.
 - Only read-only coding is enabled.
 - One App Server process is created per job.
@@ -53,7 +53,7 @@ CI repeats clean installation, lint, typecheck, tests, build, and harness verifi
 
 - Implement and prove the OS-level readable-root boundary in [Readable-root isolation design](READABLE_ROOT_ISOLATION.md).
 - Verify authentication expiry and logout behavior inside the selected boundary.
-- Add Codex CLI compatibility checks based on generated version-specific App Server schemas.
+- Keep the Codex CLI pin inside `SUPPORTED_CODEX_CLI_RANGE` after verifying a new CLI; generated version-specific App Server schemas remain a follow-up.
 - Exercise slow-consumer behavior with a real network client under production limits.
 - Implement transactional encrypted-payload key rotation and rehearse recovery after rotation.
 

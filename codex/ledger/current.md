@@ -29,13 +29,14 @@
 
 - [x] Record the readable-root threat and an implementation-ready isolation design
 - [x] Define a conservative Renovate policy with no automerge
+- [x] Codex CLI version pin and App Server contract checks (`CODEX_UNSUPPORTED_VERSION`)
 - [ ] Select and provision the VM/runtime used for the readable-root boundary
 - [ ] Verify real Codex login and structured runs inside that boundary
 - [ ] Migrate the installed service only after backup and rollback rehearsal
 
 ## Deferred Backlog
 
-- Codex CLI generated-schema/version compatibility checks
+- Codex CLI generated-schema compatibility checks beyond the version pin
 - transactional encryption-key rotation
 - write-capable worktrees and patch/commit artifacts
 - image, audio, and realtime capability adapters

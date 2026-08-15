@@ -71,4 +71,4 @@ Statuses are `queued`, `running`, `completed`, `failed`, and `cancelled`. Codex 
 }
 ```
 
-Clients must branch on `code`, not message text. Current stable codes include authentication, validation, not-found, idempotency, queue, cancellation, structured-output validation, Codex authentication/rate/overload/timeout/execution, and internal failures.
+Clients must branch on `code`, not message text. Current stable codes include authentication, validation, not-found, idempotency, queue, cancellation, structured-output validation, Codex authentication/unsupported-version/rate/overload/timeout/execution, and internal failures. `/readyz` uses `CODEX_UNSUPPORTED_VERSION` when the installed CLI is outside the supported range or cannot be parsed.

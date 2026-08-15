@@ -6,6 +6,7 @@ import type { FastifyInstance } from "fastify";
 import { buildApp } from "../src/app.js";
 import type { CodingRunner } from "../src/adapters/codex/runner.js";
 import { JobProcessor } from "../src/application/job-processor.js";
+import { GatewayError } from "../src/domain/errors.js";
 import { GatewayStore } from "../src/application/store.js";
 import { SecretBox } from "../src/infrastructure/crypto.js";
 import { openDatabase } from "../src/infrastructure/database.js";
@@ -19,7 +20,7 @@ afterEach(async () => {
   for (const root of inferenceRoots.splice(0)) rmSync(root, { recursive: true, force: true });
 });
 
-async function testApp(runner?: CodingRunner, maxQueuedJobs = 10) {
+async function testApp(runner?: CodingRunner, maxQueuedJobs = 10, readinessProbe?: () => Promise<void>) {
   const inferenceWorkspaceRoot = mkdtempSync(join(tmpdir(), "codexgw-inference-root-"));
   inferenceRoots.push(inferenceWorkspaceRoot);
   const config = testConfig({ maxQueuedJobs, inferenceWorkspaceRoot });
@@ -39,7 +40,13 @@ async function testApp(runner?: CodingRunner, maxQueuedJobs = 10) {
     config.maxConcurrentJobs,
     config.inferenceWorkspaceRoot
   );
-  const app = await buildApp({ config, store, processor, closeDatabase: database.close });
+  const app = await buildApp({
+    config,
+    store,
+    processor,
+    closeDatabase: database.close,
+    ...(readinessProbe ? { readinessProbe } : {})
+  });
   apps.push(app);
   await app.ready();
   return { app, store, database };
@@ -73,6 +80,27 @@ describe("V2 API", () => {
     required: ["verdict"],
     additionalProperties: false
   };
+
+  it("surfaces a distinct readiness error for an unsupported Codex CLI", async () => {
+    const { app } = await testApp(undefined, 10, async () => {
+      throw new GatewayError(
+        "CODEX_UNSUPPORTED_VERSION",
+        "The installed Codex CLI is not a supported version",
+        503,
+        false
+      );
+    });
+    const response = await app.inject({ method: "GET", url: "/readyz" });
+    expect(response.statusCode).toBe(503);
+    expect(response.json()).toEqual({
+      error: {
+        code: "CODEX_UNSUPPORTED_VERSION",
+        message: "The installed Codex CLI is not a supported version",
+        retryable: false
+      }
+    });
+    expect(response.body).not.toContain(process.cwd());
+  });
 
   it("requires authentication and never returns repository paths", async () => {
     const { app } = await testApp();

@@ -1,5 +1,12 @@
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it } from "vitest";
+import {
+  CODEX_APP_SERVER_METHODS,
+  CODEX_INITIALIZE_PARAMS
+} from "../src/adapters/codex/compatibility.js";
 import {
   CodexAppServerRunner,
   mapCodexInfo,
@@ -8,19 +15,39 @@ import {
 } from "../src/adapters/codex/runner.js";
 
 const fixture = fileURLToPath(new URL("./fixtures/fake-codex-app-server.mjs", import.meta.url));
+const homes: string[] = [];
+
+afterEach(() => {
+  for (const home of homes.splice(0)) rmSync(home, { recursive: true, force: true });
+});
+
+function fakeHome(sidecars: Record<string, string> = {}): string {
+  const home = mkdtempSync(join(tmpdir(), "codexgw-fake-home-"));
+  homes.push(home);
+  for (const [name, value] of Object.entries(sidecars)) {
+    writeFileSync(join(home, name), value);
+  }
+  return home;
+}
+
+function runner(codexHome: string, maxResultBytes = 1024): CodexAppServerRunner {
+  return new CodexAppServerRunner({
+    command: fixture,
+    codexHome,
+    rpcTimeoutMs: 1_000,
+    turnTimeoutMs: 1_000,
+    maxResultBytes
+  });
+}
 
 describe("CodexAppServerRunner process contract", () => {
   it("checks ChatGPT auth and forwards outputSchema through real stdio", async () => {
-    const runner = new CodexAppServerRunner({
-      command: fixture,
-      codexHome: "/tmp/codexgw-fake-home",
-      rpcTimeoutMs: 1_000,
-      turnTimeoutMs: 1_000,
-      maxResultBytes: 1024
-    });
-    await expect(runner.checkReady()).resolves.toBeUndefined();
+    const home = fakeHome();
+    const transcript = join(home, "transcript.jsonl");
+    writeFileSync(join(home, "fake-transcript-path"), transcript);
+    await expect(runner(home).checkReady()).resolves.toBeUndefined();
     const events: string[] = [];
-    const result = await runner.run({
+    const result = await runner(home).run({
       repositoryPath: process.cwd(),
       backendThreadId: null,
       prompt: "review",
@@ -35,6 +62,52 @@ describe("CodexAppServerRunner process contract", () => {
     });
     expect(result).toEqual({ backendThreadId: "thread-fake", result: '{"verdict":"accept"}' });
     expect(events).toEqual(['{"verdict":"accept"}']);
+
+    const methods = readFileSync(transcript, "utf8").trim().split("\n").map((line) => JSON.parse(line) as {
+      method: string;
+      params: Record<string, unknown> | null;
+    });
+    expect(methods.map((entry) => entry.method)).toEqual([
+      CODEX_APP_SERVER_METHODS.initialize,
+      CODEX_APP_SERVER_METHODS.initialized,
+      CODEX_APP_SERVER_METHODS.accountRead,
+      CODEX_APP_SERVER_METHODS.initialize,
+      CODEX_APP_SERVER_METHODS.initialized,
+      CODEX_APP_SERVER_METHODS.threadStart,
+      CODEX_APP_SERVER_METHODS.turnStart
+    ]);
+    expect(methods[0]?.params).toEqual(CODEX_INITIALIZE_PARAMS);
+    expect(methods.at(-1)?.params).toMatchObject({
+      approvalPolicy: "never",
+      outputSchema: { type: "object" }
+    });
+  });
+
+  it("cancels a slow CLI version probe before starting App Server", async () => {
+    const home = fakeHome({ "fake-version-delay-ms": "10000" });
+    const transcript = join(home, "transcript.jsonl");
+    writeFileSync(join(home, "fake-transcript-path"), transcript);
+    const controller = new AbortController();
+    const pending = runner(home).run({
+      repositoryPath: process.cwd(),
+      backendThreadId: null,
+      prompt: "review",
+      outputSchema: { type: "object", properties: { verdict: { type: "string" } }, required: ["verdict"] },
+      signal: controller.signal,
+      onEvent: async () => undefined
+    });
+    controller.abort();
+    await expect(pending).rejects.toMatchObject({ code: "CODEX_EXECUTION_FAILED" });
+    expect(existsSync(transcript) ? readFileSync(transcript, "utf8") : "").toBe("");
+  });
+
+  it("fails closed on an unsupported or unreadable Codex CLI version", async () => {
+    await expect(runner(fakeHome({ "fake-version": "0.80.0" })).checkReady())
+      .rejects.toMatchObject({ code: "CODEX_UNSUPPORTED_VERSION", retryable: false, statusCode: 503 });
+    await expect(runner(fakeHome({ "fake-version": "not-a-version" })).checkReady())
+      .rejects.toMatchObject({ code: "CODEX_UNSUPPORTED_VERSION" });
+    await expect(runner(fakeHome({ "fake-initialize": "missing-user-agent" })).checkReady())
+      .rejects.toMatchObject({ code: "CODEX_UNSUPPORTED_VERSION" });
   });
 
   it("redacts absolute paths that span streaming chunk boundaries", async () => {
@@ -69,13 +142,7 @@ describe("CodexAppServerRunner process contract", () => {
   });
 
   it("bounds the final item/completed message and keeps unauthorized non-retryable", async () => {
-    const bounded = new CodexAppServerRunner({
-      command: fixture,
-      codexHome: "/tmp/codexgw-fake-home",
-      rpcTimeoutMs: 1_000,
-      turnTimeoutMs: 1_000,
-      maxResultBytes: 8
-    });
+    const bounded = runner(fakeHome(), 8);
     const result = await bounded.run({
       repositoryPath: process.cwd(),
       backendThreadId: null,
@@ -91,13 +158,7 @@ describe("CodexAppServerRunner process contract", () => {
     });
     expect(Buffer.byteLength(result.result)).toBeLessThanOrEqual(8);
 
-    const failing = new CodexAppServerRunner({
-      command: fixture,
-      codexHome: "/tmp/codexgw-fake-home",
-      rpcTimeoutMs: 1_000,
-      turnTimeoutMs: 1_000,
-      maxResultBytes: 1024
-    });
+    const failing = runner(fakeHome());
     await expect(failing.run({
       repositoryPath: process.cwd(),
       backendThreadId: null,

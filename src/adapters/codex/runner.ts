@@ -1,5 +1,14 @@
+import { spawn } from "node:child_process";
 import { homedir } from "node:os";
 import { GatewayError } from "../../domain/errors.js";
+import {
+  assertSupportedCodexVersion,
+  CODEX_APP_SERVER_METHODS,
+  CODEX_APP_SERVER_NOTIFICATIONS,
+  CODEX_INITIALIZE_PARAMS,
+  parseCodexVersion,
+  unsupportedCodexVersionError
+} from "./compatibility.js";
 import { BufferedJsonRpcTransport, CodexRpcError } from "./json-rpc.js";
 import type { CodingRunInput, CodingRunResult, CodingRunner } from "../runner.js";
 
@@ -40,10 +49,20 @@ export class CodexAppServerRunner implements CodingRunner {
       if (this.readiness.error) throw this.readiness.error;
       return;
     }
+    try {
+      await this.assertCliVersion();
+    } catch (error) {
+      const normalized = mapCodexError(error);
+      this.readiness = { checkedAt: Date.now(), error: normalized };
+      throw normalized;
+    }
     const transport = this.createTransport();
     try {
       await this.initialize(transport);
-      const response = await transport.request<{ account?: unknown }>("account/read", { refreshToken: false });
+      const response = await transport.request<{ account?: unknown }>(
+        CODEX_APP_SERVER_METHODS.accountRead,
+        { refreshToken: false }
+      );
       const account = asRecord(response.account);
       if (account.type !== "chatgpt") {
         throw new GatewayError(
@@ -64,9 +83,15 @@ export class CodexAppServerRunner implements CodingRunner {
   }
 
   async run(input: CodingRunInput): Promise<CodingRunResult> {
-    const transport = this.createTransport();
+    let transport: BufferedJsonRpcTransport | undefined;
     try {
-      await this.initialize(transport);
+      await this.assertCliVersion(input.signal);
+      if (input.signal.aborted) {
+        throw input.signal.reason ?? new Error("Aborted");
+      }
+      const active = this.createTransport();
+      transport = active;
+      await this.initialize(active);
 
       const common = {
         cwd: input.repositoryPath,
@@ -75,14 +100,17 @@ export class CodexAppServerRunner implements CodingRunner {
         ...(this.config.model ? { model: this.config.model } : {})
       };
       const thread = input.backendThreadId
-        ? await transport.request<ThreadResponse>("thread/resume", { threadId: input.backendThreadId, ...common })
-        : await transport.request<ThreadResponse>("thread/start", {
+        ? await active.request<ThreadResponse>(CODEX_APP_SERVER_METHODS.threadResume, {
+            threadId: input.backendThreadId,
+            ...common
+          })
+        : await active.request<ThreadResponse>(CODEX_APP_SERVER_METHODS.threadStart, {
             ...common,
             ephemeral: false,
             developerInstructions: "Operate read-only. Never request approval, network access, or filesystem writes."
           });
       const threadId = thread.thread.id;
-      const started = await transport.request<TurnResponse>("turn/start", {
+      const started = await active.request<TurnResponse>(CODEX_APP_SERVER_METHODS.turnStart, {
         threadId,
         input: [{ type: "text", text: input.prompt }],
         approvalPolicy: "never",
@@ -90,11 +118,11 @@ export class CodexAppServerRunner implements CodingRunner {
       });
       const turnId = started.turn.id;
       const interrupt = () => {
-        void transport.request("turn/interrupt", { threadId, turnId }).catch(() => undefined);
+        void active.request(CODEX_APP_SERVER_METHODS.turnInterrupt, { threadId, turnId }).catch(() => undefined);
       };
       input.signal.addEventListener("abort", interrupt, { once: true });
       try {
-        const result = await this.collectTurn(transport, threadId, turnId, input);
+        const result = await this.collectTurn(active, threadId, turnId, input);
         return { backendThreadId: threadId, result };
       } finally {
         input.signal.removeEventListener("abort", interrupt);
@@ -106,7 +134,7 @@ export class CodexAppServerRunner implements CodingRunner {
         : undefined;
       throw normalized;
     } finally {
-      transport.close();
+      transport?.close();
     }
   }
 
@@ -119,12 +147,74 @@ export class CodexAppServerRunner implements CodingRunner {
     });
   }
 
-  private async initialize(transport: BufferedJsonRpcTransport): Promise<void> {
-    await transport.request("initialize", {
-      clientInfo: { name: "local-agent-gateway", title: "Local Agent Gateway", version: "2.0.0" },
-      capabilities: { experimentalApi: false }
+  private async assertCliVersion(signal?: AbortSignal): Promise<void> {
+    const output = await this.readCliVersion(signal);
+    const version = parseCodexVersion(output);
+    if (!version) throw unsupportedCodexVersionError();
+    assertSupportedCodexVersion(version);
+  }
+
+  private readCliVersion(signal?: AbortSignal): Promise<string> {
+    return new Promise((resolve, reject) => {
+      if (signal?.aborted) {
+        reject(signal.reason ?? new Error("Aborted"));
+        return;
+      }
+      const child = spawn(this.config.command, ["--version"], {
+        env: buildCodexEnvironment(process.env, this.config.codexHome),
+        stdio: ["ignore", "pipe", "pipe"]
+      });
+      let stdout = "";
+      let stdoutBytes = 0;
+      let settled = false;
+      const onAbort = () => finish(() => {
+        child.kill("SIGKILL");
+        reject(signal?.reason ?? new Error("Aborted"));
+      });
+      signal?.addEventListener("abort", onAbort, { once: true });
+      const timer = setTimeout(() => finish(() => {
+        child.kill("SIGKILL");
+        reject(new GatewayError("CODEX_NOT_CONFIGURED", "Codex version probe timed out", 503, false));
+      }), 10_000);
+      timer.unref();
+      const finish = (action: () => void) => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timer);
+        signal?.removeEventListener("abort", onAbort);
+        action();
+      };
+      child.stdout?.on("data", (chunk: Buffer) => {
+        stdoutBytes += chunk.byteLength;
+        if (stdoutBytes > 4096) {
+          finish(() => {
+            child.kill("SIGKILL");
+            reject(unsupportedCodexVersionError());
+          });
+          return;
+        }
+        stdout += chunk.toString();
+      });
+      child.on("error", (error) => finish(() => {
+        const code = (error as NodeJS.ErrnoException).code === "ENOENT" ? "CODEX_NOT_CONFIGURED" : "CODEX_EXECUTION_FAILED";
+        reject(new GatewayError(code, "Codex executable could not be started", 503, false));
+      }));
+      child.on("close", (exitCode) => finish(() => {
+        if (exitCode === 0) resolve(stdout);
+        else reject(new GatewayError("CODEX_NOT_CONFIGURED", "Codex version probe failed", 503, false));
+      }));
     });
-    transport.notify("initialized");
+  }
+
+  private async initialize(transport: BufferedJsonRpcTransport): Promise<void> {
+    const result = await transport.request<Record<string, unknown>>(
+      CODEX_APP_SERVER_METHODS.initialize,
+      CODEX_INITIALIZE_PARAMS
+    );
+    if (typeof result.userAgent !== "string" || result.userAgent.length === 0) {
+      throw unsupportedCodexVersionError();
+    }
+    transport.notify(CODEX_APP_SERVER_METHODS.initialized);
   }
 
   private async collectTurn(
@@ -141,16 +231,16 @@ export class CodexAppServerRunner implements CodingRunner {
       if (typeof params.threadId === "string" && params.threadId !== threadId) continue;
       if (typeof params.turnId === "string" && params.turnId !== turnId) continue;
 
-      if (notification.method === "item/agentMessage/delta" && typeof params.delta === "string") {
+      if (notification.method === CODEX_APP_SERVER_NOTIFICATIONS.agentMessageDelta && typeof params.delta === "string") {
         await stream.push(params.delta);
         continue;
       }
-      if (notification.method === "item/completed") {
+      if (notification.method === CODEX_APP_SERVER_NOTIFICATIONS.itemCompleted) {
         const item = asRecord(params.item);
         if (item.type === "agentMessage" && typeof item.text === "string") completedAgentText = item.text;
         continue;
       }
-      if (notification.method !== "turn/completed") continue;
+      if (notification.method !== CODEX_APP_SERVER_NOTIFICATIONS.turnCompleted) continue;
 
       const turn = asRecord(params.turn);
       const status = turn.status;

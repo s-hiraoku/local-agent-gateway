@@ -124,7 +124,10 @@ export async function buildApp(dependencies: AppDependencies): Promise<FastifyIn
       if (!processor.isReady()) throw new Error("Job processor is not ready");
       await dependencies.readinessProbe?.();
       return { status: "ready" as const };
-    } catch {
+    } catch (error) {
+      if (error instanceof GatewayError) {
+        throw new GatewayError(error.code, error.message, 503, error.retryable);
+      }
       throw new GatewayError("INTERNAL_ERROR", "Gateway dependencies are not ready", 503, true);
     }
   });

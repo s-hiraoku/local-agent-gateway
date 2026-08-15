@@ -12,7 +12,7 @@ For the future untrusted-input boundary, see [Readable-root isolation design](RE
 Requirements:
 
 - Node.js 26 and pnpm 11.13;
-- the current Codex CLI;
+- a Codex CLI pinned inside the supported range in `src/adapters/codex/compatibility.ts`;
 - `~/.codex-gateway` authenticated with ChatGPT and mode `0700`;
 - no `config.toml` inside that dedicated Codex home.
 
@@ -177,7 +177,10 @@ curl -i http://127.0.0.1:8787/v1/models
 ```
 
 The listener must be `127.0.0.1:8787`. `/readyz` verifies SQLite, the job
-processor, and the dedicated ChatGPT-authenticated Codex App Server. With
+processor, the Codex CLI version pin, and the dedicated ChatGPT-authenticated
+Codex App Server. An unsupported CLI version returns `CODEX_UNSUPPORTED_VERSION`
+and is not ready. Bump `SUPPORTED_CODEX_CLI_RANGE` only after the fake-server
+contract tests and a live App Server probe succeed. With
 compatibility enabled, the unauthenticated `/v1/models` check must return
 `401`; `404` means the installed release has compatibility disabled. A trusted
 client configured with the Gateway bearer token must receive `200` and the
