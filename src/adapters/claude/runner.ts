@@ -36,6 +36,10 @@ export class ClaudeHeadlessRunner implements CodingRunner {
     const args = [
       "--print",
       "--output-format", "json",
+      // Drop inherited CLAUDE.md, skills, plugins, hooks, and MCP servers while
+      // keeping the owner's Claude login. `--tools ""` then disables the
+      // remaining built-in tools.
+      "--safe-mode",
       ...(input.outputSchema ? ["--json-schema", JSON.stringify(input.outputSchema)] : []),
       ...(this.config.model ? ["--model", this.config.model] : []),
       // Last: `--tools` is variadic, so nothing after it can be swallowed.

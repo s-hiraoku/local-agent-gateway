@@ -65,6 +65,7 @@ describe("ClaudeHeadlessRunner", () => {
     const tokens = readNulSeparated(argvFile);
     expect(tokens).toContain("--json-schema");
     expect(tokens).toContain("--output-format");
+    expect(tokens).toContain("--safe-mode");
     expect(tokens).toContain("--tools");
     expect(tokens[tokens.indexOf("--tools") + 1]).toBe("");
     expect(tokens.at(-2)).toBe("--tools");
