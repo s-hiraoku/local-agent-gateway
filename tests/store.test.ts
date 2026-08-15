@@ -277,17 +277,23 @@ describe("GatewayStore", () => {
     await store.failJob(failed.job.id, "CODEX_RATE_LIMITED", "slow down", true);
     await database.db.updateTable("jobs").set({ completedAt: now }).where("id", "=", failed.job.id).execute();
 
+    const claudeFailed = await queuedJobWithKey(store, "metrics-claude-limited");
+    await store.claimNextJob();
+    await store.failJob(claudeFailed.job.id, "CLAUDE_RATE_LIMITED", "slow down", true);
+    await database.db.updateTable("jobs").set({ completedAt: now }).where("id", "=", claudeFailed.job.id).execute();
+
     const cancelled = await queuedJobWithKey(store, "metrics-cancelled");
     await store.requestCancellation("owner", cancelled.job.id);
     await queuedJobWithKey(store, "metrics-queued");
 
     const metrics = await store.metrics(wideWindow, now);
 
-    expect(metrics.jobsByStatus).toEqual({ queued: 1, running: 0, completed: 1, failed: 1, cancelled: 1 });
-    expect(metrics.jobsByKind).toEqual({ "coding.turn": 4, "inference.turn": 0 });
+    expect(metrics.jobsByStatus).toEqual({ queued: 1, running: 0, completed: 1, failed: 2, cancelled: 1 });
+    expect(metrics.jobsByKind).toEqual({ "coding.turn": 5, "inference.turn": 0 });
     expect(metrics.queue).toMatchObject({ depth: 1, queued: 1, running: 0 });
     expect(metrics.queue.oldestQueuedAgeSeconds).toBeGreaterThanOrEqual(0);
-    expect(metrics.window.failuresByErrorCode).toEqual({ CODEX_RATE_LIMITED: 1 });
+    expect(metrics.window.failuresByErrorCode).toEqual({ CODEX_RATE_LIMITED: 1, CLAUDE_RATE_LIMITED: 1 });
+    expect(metrics.window.rateLimitedByBackend).toEqual({ codex: 1, claude: 1 });
     expect(metrics.window.completedDurationSeconds).toMatchObject({ count: 1, p50: 2, p95: 2 });
     expect(metrics.retention).toEqual({
       lastRunAt: null,
@@ -307,6 +313,7 @@ describe("GatewayStore", () => {
     const metrics = await store.metrics("2001-01-01T00:00:00.000Z", "2001-01-02T00:00:00.000Z");
     expect(metrics.jobsByStatus.failed).toBe(1);
     expect(metrics.window.failuresByErrorCode).toEqual({});
+    expect(metrics.window.rateLimitedByBackend).toEqual({ codex: 0, claude: 0 });
   });
 
   it("computes nearest-rank duration percentiles in SQLite", async () => {

@@ -281,7 +281,7 @@ Clients MUST branch primarily on HTTP status and `error.code`; message text is n
 | `401` | `authentication_error` | `AUTH_REQUIRED` |
 | `404` | `invalid_request_error` | `NOT_FOUND` |
 | `409` | `invalid_request_error` | `IDEMPOTENCY_CONFLICT`, cancellation conflict |
-| `429` | `rate_limit_error` | `QUEUE_FULL`, `CODEX_RATE_LIMITED` |
+| `429` | `rate_limit_error` | `QUEUE_FULL`, `CODEX_RATE_LIMITED`, `CLAUDE_RATE_LIMITED` |
 | `502` | `api_error` | `CODEX_EXECUTION_FAILED`, `CODEX_OVERLOADED` |
 | `503` | `api_error` | `CODEX_UNAUTHORIZED`, `CODEX_UNSUPPORTED_VERSION`, dependency not ready |
 | `504` | `api_error` | Codex or compatibility wait timeout |

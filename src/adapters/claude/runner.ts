@@ -62,10 +62,13 @@ export class ClaudeHeadlessRunner implements CodingRunner {
     }
     if (envelope.is_error === true || envelope.subtype !== "success") {
       const message = typeof envelope.result === "string" ? envelope.result : "Claude reported an error";
-      const code = /unauthor|logged in|log in|authenticate|credit balance/i.test(message)
-        ? "CLAUDE_UNAUTHORIZED"
-        : "CLAUDE_EXECUTION_FAILED";
-      throw new GatewayError(code, "Claude could not complete the inference turn", code === "CLAUDE_UNAUTHORIZED" ? 401 : 502, code !== "CLAUDE_UNAUTHORIZED");
+      const code = mapClaudeInfo(message);
+      throw new GatewayError(
+        code,
+        "Claude could not complete the inference turn",
+        code === "CLAUDE_UNAUTHORIZED" ? 401 : code === "CLAUDE_RATE_LIMITED" ? 429 : 502,
+        code !== "CLAUDE_UNAUTHORIZED"
+      );
     }
 
     // Prefer the native structured object; fall back to the result text.
@@ -165,6 +168,12 @@ export class ClaudeHeadlessRunner implements CodingRunner {
       }));
     });
   }
+}
+
+export function mapClaudeInfo(message: string): "CLAUDE_UNAUTHORIZED" | "CLAUDE_RATE_LIMITED" | "CLAUDE_EXECUTION_FAILED" {
+  if (/unauthor|logged in|log in|authenticate|credit balance/i.test(message)) return "CLAUDE_UNAUTHORIZED";
+  if (/rate limit|too many requests|usage limit|quota exceeded|hit your limit|\b429\b/i.test(message)) return "CLAUDE_RATE_LIMITED";
+  return "CLAUDE_EXECUTION_FAILED";
 }
 
 export function buildClaudeEnvironment(source: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
