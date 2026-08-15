@@ -11,7 +11,7 @@
 
 - Repository: local-agent-gateway
 - Target branch: `main`
-- Related PRs: #23 (merged metrics), #25 (hardening documentation and Renovate), #13 (superseded Renovate onboarding)
+- Related PRs: #23 (merged metrics), #25 (hardening documentation and Renovate), #13 (superseded Renovate onboarding), #33 (readable-root VM)
 - Important files: `README.md`, `docs/THREAT_MODEL.md`, `docs/READABLE_ROOT_ISOLATION.md`, `docs/LOCAL_PRODUCTION.md`, `src/`, `tests/`, `scripts/verify.sh`
 
 ## Delivered
@@ -32,8 +32,9 @@
 - [x] Record the readable-root threat and an implementation-ready isolation design
 - [x] Define a conservative Renovate policy with no automerge
 - [x] Codex CLI version pin and App Server contract checks (`CODEX_UNSUPPORTED_VERSION`)
-- [ ] Select and provision the VM/runtime used for the readable-root boundary
+- [x] Select Lima (`vz`) and implement the opt-in executor (`CODEXGW_CODEX_EXECUTOR=lima`)
 - [ ] Verify real Codex login and structured runs inside that boundary
+- [ ] Prove guest tool subprocesses cannot read `CODEX_HOME`
 - [ ] Migrate the installed service only after backup and rollback rehearsal
 
 ## Deferred Backlog
@@ -48,12 +49,11 @@ These are explicit follow-up projects, not omissions from the current hardening 
 
 ## Blockers
 
-- A real readable-root boundary requires an operator-selected VM/runtime, credential supervisor, network policy, and host-level migration. Repository changes alone cannot safely provision or authenticate it.
-- Decision owner: the human operator must approve the VM/runtime, guest networking, credential migration, backup, and rollback plan before host changes begin.
+- Live Lima acceptance evidence, guest tool isolation, and LaunchAgent migration still require operator-run VM work. The default executor remains `host`.
 
 ## Next Step
 
-- Review `docs/READABLE_ROOT_ISOLATION.md`, choose the VM/runtime, and run the documented proof before treating untrusted prompts or repositories as supported.
+- Create the Lima instance from `scripts/lima/codexgw.yaml`, authenticate the guest Codex home, and record the acceptance suite before treating untrusted prompts or repositories as supported.
 
 ## Checkpoints
 
