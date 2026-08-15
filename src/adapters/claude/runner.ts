@@ -18,8 +18,6 @@ type ClaudeRunnerConfig = {
   maxResultBytes: number;
 };
 
-const DISALLOWED_TOOLS = ["Bash", "Edit", "Write", "Read", "WebFetch", "WebSearch", "Glob", "Grep"];
-
 export class ClaudeHeadlessRunner implements CodingRunner {
   constructor(private readonly config: ClaudeRunnerConfig) {}
 
@@ -31,15 +29,26 @@ export class ClaudeHeadlessRunner implements CodingRunner {
   }
 
   async run(input: CodingRunInput): Promise<CodingRunResult> {
+    // The prompt goes over stdin, never argv: `--tools` and the other tool
+    // flags are variadic, so a trailing prompt argument is parsed as one more
+    // tool name and the turn runs with no input at all. Stdin also keeps the
+    // prompt out of the process table.
     const args = [
       "--print",
       "--output-format", "json",
-      "--json-schema", JSON.stringify(input.outputSchema ?? {}),
-      "--disallowed-tools", ...DISALLOWED_TOOLS,
+      ...(input.outputSchema ? ["--json-schema", JSON.stringify(input.outputSchema)] : []),
       ...(this.config.model ? ["--model", this.config.model] : []),
-      input.prompt
+      // Last: `--tools` is variadic, so nothing after it can be swallowed.
+      "--tools", ""
     ];
-    const stdout = await this.spawnClaude(args, input.repositoryPath, this.config.turnTimeoutMs, "turn", input.signal);
+    const stdout = await this.spawnClaude(
+      args,
+      input.repositoryPath,
+      this.config.turnTimeoutMs,
+      "turn",
+      input.signal,
+      input.prompt
+    );
 
     let envelope: Record<string, unknown>;
     try {
@@ -75,14 +84,26 @@ export class ClaudeHeadlessRunner implements CodingRunner {
     cwd: string | undefined,
     timeoutMs: number,
     phase: "readiness" | "turn",
-    signal?: AbortSignal
+    signal?: AbortSignal,
+    stdin?: string
   ): Promise<string> {
     return new Promise<string>((resolve, reject) => {
       const child = spawn(this.config.command, args, {
         cwd,
         env: buildClaudeEnvironment(process.env),
-        stdio: ["ignore", "pipe", "pipe"]
+        stdio: stdin === undefined ? ["ignore", "pipe", "pipe"] : ["pipe", "pipe", "pipe"]
       });
+      if (stdin !== undefined) {
+        // A prompt larger than the pipe buffer would deadlock if the child
+        // exits early, so ignore write errors and let close/error settle.
+        child.stdin?.on("error", () => undefined);
+        child.stdin?.end(stdin);
+      }
+      if (!child.stdout || !child.stderr) {
+        child.kill("SIGKILL");
+        reject(new GatewayError("CLAUDE_EXECUTION_FAILED", "Claude executable could not be started", 502, true));
+        return;
+      }
       let stdout = "";
       let stderr = "";
       let settled = false;

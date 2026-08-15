@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it } from "vitest";
-import { mkdtempSync, rmSync, writeFileSync, chmodSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync, chmodSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { ClaudeHeadlessRunner } from "../src/adapters/claude/runner.js";
@@ -11,8 +11,8 @@ afterEach(() => {
   for (const directory of directories.splice(0)) rmSync(directory, { recursive: true, force: true });
 });
 
-// Write a fake `claude` executable that emits a canned response and records its
-// argv so the test can assert the flags the runner passes.
+// Write a fake `claude` executable that emits a canned response. Tests that
+// need to inspect flags or the prompt can record argv/stdin themselves.
 function fakeClaude(script: string): { command: string; dir: string } {
   const dir = mkdtempSync(join(tmpdir(), "codexgw-claude-fake-"));
   directories.push(dir);
@@ -24,6 +24,10 @@ function fakeClaude(script: string): { command: string; dir: string } {
 
 function runnerFor(command: string) {
   return new ClaudeHeadlessRunner({ command, turnTimeoutMs: 5_000, maxResultBytes: 1024 * 1024 });
+}
+
+function readNulSeparated(path: string): string[] {
+  return readFileSync(path).toString("utf8").split("\0").slice(0, -1);
 }
 
 const baseInput = {
@@ -38,7 +42,7 @@ const baseInput = {
 describe("ClaudeHeadlessRunner", () => {
   it("returns the native structured_output object as the result", async () => {
     const { command } = fakeClaude(
-      `cat > "$TMPDIR/claude-argv" <<EOF\n$@\nEOF\n` +
+      `cat >/dev/null\n` +
       `echo '{"type":"result","subtype":"success","is_error":false,"session_id":"sess-1","result":"{\\"verdict\\":\\"revise\\"}","structured_output":{"verdict":"revise"}}'`
     );
     const runner = runnerFor(command);
@@ -47,19 +51,42 @@ describe("ClaudeHeadlessRunner", () => {
     expect(result.backendThreadId).toBe("sess-1");
   });
 
-  it("passes --json-schema and disallows filesystem tools", async () => {
-    const argvFile = join(mkdtempSync(join(tmpdir(), "codexgw-claude-argv-")), "argv");
-    directories.push(argvFile);
+  it("sends the prompt on stdin and disables all tools", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "codexgw-claude-argv-"));
+    directories.push(dir);
+    const argvFile = join(dir, "argv");
+    const stdinFile = join(dir, "stdin");
     const { command } = fakeClaude(
-      `printf '%s\\n' "$@" > "${argvFile}"\n` +
+      `printf '%s\\0' "$@" > "${argvFile}"\n` +
+      `cat > "${stdinFile}"\n` +
       `echo '{"type":"result","subtype":"success","is_error":false,"structured_output":{"verdict":"accept"}}'`
     );
     await runnerFor(command).run(baseInput);
-    const argv = (await import("node:fs")).readFileSync(argvFile, "utf8");
-    expect(argv).toContain("--json-schema");
-    expect(argv).toContain("--disallowed-tools");
-    expect(argv).toContain("Bash");
-    expect(argv).toContain("--output-format");
+    const tokens = readNulSeparated(argvFile);
+    expect(tokens).toContain("--json-schema");
+    expect(tokens).toContain("--output-format");
+    expect(tokens).toContain("--tools");
+    expect(tokens[tokens.indexOf("--tools") + 1]).toBe("");
+    expect(tokens.at(-2)).toBe("--tools");
+    expect(tokens).not.toContain("--disallowed-tools");
+    expect(tokens).not.toContain(baseInput.prompt);
+    expect(readFileSync(stdinFile, "utf8")).toBe(baseInput.prompt);
+  });
+
+  it("omits --json-schema when the turn has no output schema", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "codexgw-claude-argv-"));
+    directories.push(dir);
+    const argvFile = join(dir, "argv");
+    const { command } = fakeClaude(
+      `printf '%s\\0' "$@" > "${argvFile}"\n` +
+      `cat >/dev/null\n` +
+      `echo '{"type":"result","subtype":"success","is_error":false,"result":"ok"}'`
+    );
+    const { outputSchema: _omitted, ...withoutSchema } = baseInput;
+    await runnerFor(command).run(withoutSchema);
+    const tokens = readNulSeparated(argvFile);
+    expect(tokens).not.toContain("--json-schema");
+    expect(tokens).toContain("--tools");
   });
 
   it("maps an is_error envelope to a Claude error", async () => {
