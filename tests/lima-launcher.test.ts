@@ -109,7 +109,8 @@ describe("Lima executor contract", () => {
       expect(workspace.extraRedactPaths).toEqual([workspace.cwd]);
       const copied = readFileSync(join(root, "guest", workspace.cwd, "canary.txt"), "utf8");
       expect(copied).toBe("visible-in-guest");
-      expect(readFileSync(join(root, "chmod"), "utf8")).toContain("a+rX,a-w");
+      expect(readFileSync(join(root, "chmod"), "utf8")).toContain("0711");
+      expect(readFileSync(join(root, "chmod"), "utf8")).toContain("u=rx,g=rx,o=");
       expect(readFileSync(join(root, "chown"), "utf8")).toContain(`root:${GUEST_SUPERVISOR}`);
       await workspace.cleanup();
       expect(existsSync(join(root, "guest", workspace.cwd))).toBe(false);
@@ -179,9 +180,19 @@ describe("Lima executor contract", () => {
     expect(yaml).toContain(GUEST_SUPERVISOR);
     expect(yaml).toContain(GUEST_TOOL_USER);
     expect(yaml).toContain(GUEST_CODEX_HOME);
+    expect(yaml).toContain("chmod 0711 /var/lib/codexgw/snapshots");
     expect(yaml).toContain("nft");
     expect(GUEST_NFTABLES_POLICY).toContain("tcp dport 443 accept");
     expect(GUEST_NFTABLES_POLICY).toContain("169.254.0.0/16");
+  });
+
+  it("rejects an incomplete host snapshot instead of extracting a partial archive", async () => {
+    const root = tempRoot();
+    await withFakeLima(root, async () => {
+      await expect(client(root).copySnapshot(join(root, "missing-repo"))).rejects.toMatchObject({
+        code: "CODEX_EXECUTION_FAILED"
+      });
+    });
   });
 
   it("maps missing limactl to a closed Codex configuration error", async () => {

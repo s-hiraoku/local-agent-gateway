@@ -75,8 +75,8 @@ if (action[0] === "chown") {
   process.exit(0);
 }
 
-if (action[0] === "chmod" && action[1] === "-R" && action[2] && action[3]) {
-  writeFileSync(join(root, "chmod"), action.join(" "));
+if (action[0] === "chmod") {
+  appendFileSync(join(root, "chmod"), `${action.join(" ")}\n`);
   process.exit(0);
 }
 

@@ -47,8 +47,8 @@ provision:
     mkdir -p /var/lib/codexgw/home /var/lib/codexgw/snapshots /var/lib/codexgw/tool
     chown -R codexgw:codexgw /var/lib/codexgw/home
     chmod 700 /var/lib/codexgw/home
-    chown root:codexgw /var/lib/codexgw/snapshots
-    chmod 0755 /var/lib/codexgw/snapshots
+    chown root:root /var/lib/codexgw/snapshots
+    chmod 0711 /var/lib/codexgw/snapshots
     chown -R codexgw-tool:codexgw-tool /var/lib/codexgw/tool
     chmod 700 /var/lib/codexgw/tool
     if [ -f /var/lib/codexgw/home/config.toml ]; then

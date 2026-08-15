@@ -55,7 +55,7 @@ These choices were made for issue #33. They are not inferred from ordinary repos
 | CLI pin | Bump the guest CLI only together with the supported host Codex CLI range. |
 | Default | Executor `host` so the existing LaunchAgent does not break. Lima is opt-in through `CODEXGW_CODEX_EXECUTOR=lima`. |
 
-Runtime model: one long-lived Lima VM; one App Server process and one snapshot per job; delete the snapshot after the turn.
+Runtime model: one long-lived Lima VM; one App Server process and one snapshot per job; delete the snapshot after the turn. Snapshot directories are group-readable only (`u=rx,g=rx,o=`) under a non-listable `/var/lib/codexgw/snapshots` (`0711`). Sibling isolation still depends on unguessable snapshot names while App Server shares the `codexgw` identity.
 
 ## Controls that do not satisfy the objective
 
