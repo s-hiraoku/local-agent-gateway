@@ -41,6 +41,7 @@ export type GatewayMetrics = {
   window: {
     since: string;
     failuresByErrorCode: Record<string, number>;
+    rateLimitedByBackend: { codex: number; claude: number };
     completedDurationSeconds: { count: number; p50: number | null; p95: number | null };
   };
   retention: {
