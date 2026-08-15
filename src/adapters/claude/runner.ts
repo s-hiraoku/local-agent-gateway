@@ -172,7 +172,7 @@ export class ClaudeHeadlessRunner implements CodingRunner {
 
 export function mapClaudeInfo(message: string): "CLAUDE_UNAUTHORIZED" | "CLAUDE_RATE_LIMITED" | "CLAUDE_EXECUTION_FAILED" {
   if (/unauthor|logged in|log in|authenticate|credit balance/i.test(message)) return "CLAUDE_UNAUTHORIZED";
-  if (/rate limit|too many requests|usage limit|quota exceeded|\b429\b/i.test(message)) return "CLAUDE_RATE_LIMITED";
+  if (/rate limit|too many requests|usage limit|quota exceeded|hit your limit|\b429\b/i.test(message)) return "CLAUDE_RATE_LIMITED";
   return "CLAUDE_EXECUTION_FAILED";
 }
 
