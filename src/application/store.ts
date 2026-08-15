@@ -55,6 +55,7 @@ export class GatewayStore {
   async assertEncryptionKey(): Promise<void> {
     const metadata = await this.db.selectFrom("gatewayMetadata").selectAll().where("id", "=", 1).executeTakeFirstOrThrow();
     if (!metadata.encryptionSentinel) {
+      await this.assertCurrentKeyDecryptsExistingPayloads();
       await this.db.updateTable("gatewayMetadata").set({
         encryptionSentinel: this.secrets.encrypt(ENCRYPTION_SENTINEL_PLAINTEXT, ENCRYPTION_SENTINEL_CONTEXT)
       }).where("id", "=", 1).execute();
@@ -62,6 +63,34 @@ export class GatewayStore {
     }
     const plaintext = this.secrets.decrypt(metadata.encryptionSentinel, ENCRYPTION_SENTINEL_CONTEXT);
     if (plaintext !== ENCRYPTION_SENTINEL_PLAINTEXT) {
+      throw new GatewayError(
+        "ENCRYPTION_KEY_MISMATCH",
+        "The data encryption key cannot decrypt stored payloads",
+        500
+      );
+    }
+  }
+
+  private async assertCurrentKeyDecryptsExistingPayloads(): Promise<void> {
+    const job = await this.db.selectFrom("jobs").select(["id", "encryptedPrompt"]).limit(1).executeTakeFirst();
+    if (job) {
+      this.decryptExistingPayload(job.encryptedPrompt, `job:${job.id}:prompt`);
+      return;
+    }
+    const event = await this.db.selectFrom("jobEvents")
+      .select(["jobId", "sequence", "encryptedData"])
+      .limit(1)
+      .executeTakeFirst();
+    if (event) {
+      this.decryptExistingPayload(event.encryptedData, `job:${event.jobId}:event:${event.sequence}`);
+    }
+  }
+
+  private decryptExistingPayload(payload: string, context: string): void {
+    try {
+      this.secrets.decrypt(payload, context);
+    } catch (error) {
+      if (error instanceof GatewayError && error.code === "ENCRYPTION_KEY_MISMATCH") throw error;
       throw new GatewayError(
         "ENCRYPTION_KEY_MISMATCH",
         "The data encryption key cannot decrypt stored payloads",

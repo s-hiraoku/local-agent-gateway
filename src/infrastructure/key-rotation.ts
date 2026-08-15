@@ -53,6 +53,7 @@ export async function rotateEncryptedPayloads(
       eventCount += 1;
     }
 
+    await trx.deleteFrom("idempotencyRecords").execute();
     await trx.updateTable("gatewayMetadata").set({
       encryptionSentinel: next.encrypt(ENCRYPTION_SENTINEL_PLAINTEXT, ENCRYPTION_SENTINEL_CONTEXT)
     }).where("id", "=", 1).execute();

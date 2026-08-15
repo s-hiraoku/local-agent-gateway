@@ -38,6 +38,7 @@ describe("encryption key rotation", () => {
     const result = await rotateEncryptedPayloads(database.db, new SecretBox(oldKey), new SecretBox(newKey));
     expect(result.jobs).toBe(1);
     expect(result.events).toBeGreaterThan(0);
+    expect(await database.db.selectFrom("idempotencyRecords").selectAll().execute()).toEqual([]);
 
     const rotated = new GatewayStore(database.db, new SecretBox(newKey));
     await expect(rotated.assertEncryptionKey()).resolves.toBeUndefined();
@@ -61,5 +62,19 @@ describe("encryption key rotation", () => {
     const job = await store.claimNextJob();
     expect(job).toBeDefined();
     expect(store.decryptPrompt(job!)).toBe("review this");
+  });
+
+  it("validates existing ciphertext before creating a missing sentinel", async () => {
+    const oldKey = Buffer.alloc(32, 3);
+    const { database } = await seededStore(oldKey);
+    await database.db.updateTable("gatewayMetadata").set({ encryptionSentinel: null }).where("id", "=", 1).execute();
+
+    const wrong = new GatewayStore(database.db, new SecretBox(Buffer.alloc(32, 1)));
+    await expect(wrong.assertEncryptionKey()).rejects.toMatchObject({ code: "ENCRYPTION_KEY_MISMATCH" });
+    expect((await database.db.selectFrom("gatewayMetadata").select("encryptionSentinel").where("id", "=", 1).executeTakeFirst())?.encryptionSentinel).toBeNull();
+
+    const restored = new GatewayStore(database.db, new SecretBox(oldKey));
+    await expect(restored.assertEncryptionKey()).resolves.toBeUndefined();
+    expect((await database.db.selectFrom("gatewayMetadata").select("encryptionSentinel").where("id", "=", 1).executeTakeFirst())?.encryptionSentinel).toBeTruthy();
   });
 });
