@@ -108,8 +108,16 @@ describe("ClaudeHeadlessRunner", () => {
       retryable: true,
       statusCode: 429
     });
+    const subscription = fakeClaude(
+      `echo '{"type":"result","subtype":"error_during_execution","is_error":true,"result":"You'"'"'ve hit your limit · resets 3am"}'`
+    );
+    await expect(runnerFor(subscription.command).run(baseInput)).rejects.toMatchObject({
+      code: "CLAUDE_RATE_LIMITED",
+      statusCode: 429
+    });
     expect(mapClaudeInfo("Too many requests")).toBe("CLAUDE_RATE_LIMITED");
     expect(mapClaudeInfo("quota exceeded")).toBe("CLAUDE_RATE_LIMITED");
+    expect(mapClaudeInfo("You've hit your limit · resets 3am")).toBe("CLAUDE_RATE_LIMITED");
   });
 
   it("maps non-auth failures to CLAUDE_EXECUTION_FAILED", async () => {
