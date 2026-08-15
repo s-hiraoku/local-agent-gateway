@@ -51,7 +51,7 @@ CI repeats clean installation, lint, typecheck, tests, build, and harness verifi
 
 ## Remaining gates before untrusted external use
 
-- Implement and prove the OS-level readable-root boundary in [Readable-root isolation design](READABLE_ROOT_ISOLATION.md).
+- Prove the opt-in Lima readable-root boundary with the acceptance suite in [Readable-root isolation design](READABLE_ROOT_ISOLATION.md). The default LaunchAgent still runs Codex on the host.
 - Verify authentication expiry and logout behavior inside the selected boundary.
 - Keep the Codex CLI pin inside `SUPPORTED_CODEX_CLI_RANGE` after verifying a new CLI; generated version-specific App Server schemas remain a follow-up.
 - Exercise slow-consumer behavior with a real network client under production limits.

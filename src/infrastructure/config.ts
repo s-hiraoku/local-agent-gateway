@@ -23,6 +23,9 @@ export type GatewayConfig = {
   inferenceProvider: "codex" | "claude";
   claudeCommand: string;
   claudeModel?: string;
+  codexExecutor: "host" | "lima";
+  limaCommand: string;
+  limaInstance: string;
   maxQueuedJobs: number;
   maxConcurrentJobs: number;
   maxPromptBytes: number;
@@ -143,6 +146,14 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): GatewayConfig 
     throw new GatewayError("INVALID_REQUEST", "CODEXGW_INFERENCE_PROVIDER must be 'codex' or 'claude'", 500);
   }
   const claudeModel = env.CODEXGW_CLAUDE_MODEL?.trim();
+  const codexExecutor = (env.CODEXGW_CODEX_EXECUTOR ?? "host").trim();
+  if (codexExecutor !== "host" && codexExecutor !== "lima") {
+    throw new GatewayError("INVALID_REQUEST", "CODEXGW_CODEX_EXECUTOR must be 'host' or 'lima'", 500);
+  }
+  const limaInstance = (env.CODEXGW_LIMA_INSTANCE ?? "codexgw").trim();
+  if (!/^[a-z0-9][a-z0-9_-]{0,31}$/.test(limaInstance)) {
+    throw new GatewayError("INVALID_REQUEST", "CODEXGW_LIMA_INSTANCE must use lowercase letters, digits, _ or -", 500);
+  }
   return {
     host,
     port: positiveInteger(env.CODEXGW_PORT, 8787, "CODEXGW_PORT"),
@@ -158,6 +169,9 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): GatewayConfig 
     inferenceProvider,
     claudeCommand: env.CODEXGW_CLAUDE_COMMAND ?? "claude",
     ...(claudeModel ? { claudeModel } : {}),
+    codexExecutor,
+    limaCommand: env.CODEXGW_LIMA_COMMAND ?? "limactl",
+    limaInstance,
     maxQueuedJobs: positiveInteger(env.CODEXGW_MAX_QUEUED_JOBS, 100, "CODEXGW_MAX_QUEUED_JOBS"),
     maxConcurrentJobs: positiveInteger(env.CODEXGW_MAX_CONCURRENT_JOBS, 2, "CODEXGW_MAX_CONCURRENT_JOBS"),
     maxPromptBytes: positiveInteger(env.CODEXGW_MAX_PROMPT_BYTES, 64 * 1024, "CODEXGW_MAX_PROMPT_BYTES"),

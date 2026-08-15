@@ -8,7 +8,7 @@ The current vertical slice implements subscription-backed, read-only coding and 
 
 - [Architecture](ARCHITECTURE.md): product boundary, capability adapters, and delivery sequence.
 - [Threat model](THREAT_MODEL.md): trusted parties, protected assets, security invariants, and unresolved isolation work.
-- [Readable-root isolation](READABLE_ROOT_ISOLATION.md): target VM boundary, migration plan, rollback, and acceptance tests.
+- [Readable-root isolation](READABLE_ROOT_ISOLATION.md): recorded Lima decisions, opt-in executor, residuals, and acceptance tests.
 - [Client integration](CLIENT_INTEGRATION.md): V2 API workflow and retry contract.
 - [Event streaming](EVENT_STREAMING.md): SSE event format and reconnect behavior.
 - [Quality and operations](QUALITY.md): supported runtime, verification, execution guarantees, and release gates.

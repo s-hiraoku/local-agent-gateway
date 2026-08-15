@@ -1,5 +1,7 @@
 import { mkdirSync } from "node:fs";
 import { buildApp } from "./app.js";
+import { limaAppServerLauncher } from "./adapters/codex/launcher.js";
+import { defaultLimaClient } from "./adapters/codex/lima/client.js";
 import { CodexAppServerRunner } from "./adapters/codex/runner.js";
 import { ClaudeHeadlessRunner } from "./adapters/claude/runner.js";
 import type { CodingRunner } from "./adapters/runner.js";
@@ -20,13 +22,21 @@ const store = new GatewayStore(database.db, secrets, {
 });
 // Coding turns always run on Codex (repository/sandbox isolation is
 // codex-specific). Inference turns run on the configured provider.
+const limaLauncher = config.codexExecutor === "lima"
+  ? limaAppServerLauncher(defaultLimaClient({
+      limactl: config.limaCommand,
+      instance: config.limaInstance,
+      guestCodexCommand: config.codexCommand
+    }))
+  : undefined;
 const codexRunner = new CodexAppServerRunner({
   command: config.codexCommand,
   codexHome: config.codexHome,
   ...(config.codexModel ? { model: config.codexModel } : {}),
   rpcTimeoutMs: config.rpcTimeoutMs,
   turnTimeoutMs: config.turnTimeoutMs,
-  maxResultBytes: config.maxResultBytes
+  maxResultBytes: config.maxResultBytes,
+  ...(limaLauncher ? { launcher: limaLauncher } : {})
 });
 const claudeRunner = new ClaudeHeadlessRunner({
   command: config.claudeCommand,

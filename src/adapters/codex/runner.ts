@@ -9,6 +9,8 @@ import {
   parseCodexVersion,
   unsupportedCodexVersionError
 } from "./compatibility.js";
+import { buildCodexEnvironment } from "./environment.js";
+import { hostAppServerLauncher, type AppServerLauncher } from "./launcher.js";
 import { BufferedJsonRpcTransport, CodexRpcError } from "./json-rpc.js";
 import type { CodingRunInput, CodingRunResult, CodingRunner } from "../runner.js";
 
@@ -21,28 +23,21 @@ type CodexRunnerConfig = {
   rpcTimeoutMs: number;
   turnTimeoutMs: number;
   maxResultBytes: number;
+  launcher?: AppServerLauncher;
 };
 
 type ThreadResponse = { thread: { id: string } };
 type TurnResponse = { turn: { id: string } };
 
-export function buildCodexEnvironment(source: NodeJS.ProcessEnv, codexHome: string): NodeJS.ProcessEnv {
-  const result: NodeJS.ProcessEnv = {
-    CODEX_HOME: codexHome,
-    NO_COLOR: "1",
-    TERM: "dumb"
-  };
-  for (const key of ["PATH", "HOME", "TMPDIR", "LANG", "LC_ALL", "USER", "LOGNAME", "SHELL"] as const) {
-    const value = source[key];
-    if (value) result[key] = value;
-  }
-  return result;
-}
+export { buildCodexEnvironment } from "./environment.js";
 
 export class CodexAppServerRunner implements CodingRunner {
   private readiness: { checkedAt: number; error?: GatewayError } | undefined;
+  private readonly launcher: AppServerLauncher;
 
-  constructor(private readonly config: CodexRunnerConfig) {}
+  constructor(private readonly config: CodexRunnerConfig) {
+    this.launcher = config.launcher ?? hostAppServerLauncher(config.command, config.codexHome);
+  }
 
   async checkReady(): Promise<void> {
     if (this.readiness && Date.now() - this.readiness.checkedAt < 10_000) {
@@ -50,6 +45,7 @@ export class CodexAppServerRunner implements CodingRunner {
       return;
     }
     try {
+      await this.launcher.ensureReady();
       await this.assertCliVersion();
     } catch (error) {
       const normalized = mapCodexError(error);
@@ -83,6 +79,7 @@ export class CodexAppServerRunner implements CodingRunner {
   }
 
   async run(input: CodingRunInput): Promise<CodingRunResult> {
+    const workspace = await this.launcher.prepareWorkspace(input.repositoryPath);
     let transport: BufferedJsonRpcTransport | undefined;
     try {
       await this.assertCliVersion(input.signal);
@@ -94,7 +91,7 @@ export class CodexAppServerRunner implements CodingRunner {
       await this.initialize(active);
 
       const common = {
-        cwd: input.repositoryPath,
+        cwd: workspace.cwd,
         approvalPolicy: "never",
         sandbox: "read-only",
         ...(this.config.model ? { model: this.config.model } : {})
@@ -122,7 +119,7 @@ export class CodexAppServerRunner implements CodingRunner {
       };
       input.signal.addEventListener("abort", interrupt, { once: true });
       try {
-        const result = await this.collectTurn(active, threadId, turnId, input);
+        const result = await this.collectTurn(active, threadId, turnId, input, workspace.extraRedactPaths);
         return { backendThreadId: threadId, result };
       } finally {
         input.signal.removeEventListener("abort", interrupt);
@@ -135,14 +132,16 @@ export class CodexAppServerRunner implements CodingRunner {
       throw normalized;
     } finally {
       transport?.close();
+      await workspace.cleanup();
     }
   }
 
   private createTransport(): BufferedJsonRpcTransport {
+    const launch = this.launcher.launch();
     return new BufferedJsonRpcTransport({
-      command: this.config.command,
-      args: ["app-server"],
-      env: buildCodexEnvironment(process.env, this.config.codexHome),
+      command: launch.command,
+      args: launch.args,
+      env: launch.env,
       requestTimeoutMs: this.config.rpcTimeoutMs
     });
   }
@@ -221,9 +220,15 @@ export class CodexAppServerRunner implements CodingRunner {
     transport: BufferedJsonRpcTransport,
     threadId: string,
     turnId: string,
-    input: CodingRunInput
+    input: CodingRunInput,
+    extraRedactPaths: string[] = []
   ): Promise<string> {
-    const stream = new PathRedactingStream(input.repositoryPath, this.config.maxResultBytes, input.onEvent);
+    const stream = new PathRedactingStream(
+      input.repositoryPath,
+      this.config.maxResultBytes,
+      input.onEvent,
+      extraRedactPaths
+    );
     let completedAgentText = "";
     while (true) {
       const notification = await transport.nextNotification(this.config.turnTimeoutMs, input.signal);
@@ -258,7 +263,11 @@ export class CodexAppServerRunner implements CodingRunner {
       await stream.finish();
       const finalText = completedAgentText || finalAgentMessage(turn.items);
       if (!finalText) return stream.result;
-      const bounded = appendBounded("", sanitizeOutput(finalText, input.repositoryPath), this.config.maxResultBytes);
+      const bounded = appendBounded(
+        "",
+        sanitizeOutput(finalText, input.repositoryPath, ...extraRedactPaths),
+        this.config.maxResultBytes
+      );
       await stream.reconcile(bounded);
       return bounded;
     }
@@ -280,9 +289,12 @@ function asRecord(value: unknown): Record<string, unknown> {
   return value && typeof value === "object" ? value as Record<string, unknown> : {};
 }
 
-export function sanitizeOutput(value: string, repositoryPath: string): string {
-  return value
-    .replaceAll(repositoryPath, "[repository]")
+export function sanitizeOutput(value: string, repositoryPath: string, ...extraPaths: string[]): string {
+  let result = value.replaceAll(repositoryPath, "[repository]");
+  for (const extraPath of extraPaths) {
+    if (extraPath) result = result.replaceAll(extraPath, "[repository]");
+  }
+  return result
     .replaceAll(homedir(), "[home]")
     .replace(/file:\/\/\/[^\s"'`)}\],;]*/gi, "[local-path]")
     .replace(/\\\\[^\s"'`)}\],;]+/g, "[local-path]")
@@ -316,7 +328,8 @@ export class PathRedactingStream {
   constructor(
     private readonly repositoryPath: string,
     private readonly maxBytes: number,
-    private readonly onEvent: CodingRunInput["onEvent"]
+    private readonly onEvent: CodingRunInput["onEvent"],
+    private readonly extraPaths: string[] = []
   ) {}
 
   get result(): string {
@@ -351,7 +364,7 @@ export class PathRedactingStream {
   }
 
   private async emitSanitized(value: string): Promise<void> {
-    await this.emit(sanitizeOutput(value, this.repositoryPath));
+    await this.emit(sanitizeOutput(value, this.repositoryPath, ...this.extraPaths));
   }
 
   private async emit(value: string): Promise<void> {
