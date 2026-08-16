@@ -104,7 +104,7 @@ Generated binary media will not be stored as SQLite blobs. A future artifact lay
 - no write mode without task-specific workspace isolation;
 - no capability without positive and negative authorization tests.
 
-Read-only is not considered a complete confidentiality boundary. An opt-in Lima executor isolates host and Gateway files from Codex; the default LaunchAgent remains host-local, and guest tool access to `CODEX_HOME` is not yet proven. See [Threat model](THREAT_MODEL.md) and [Readable-root isolation](READABLE_ROOT_ISOLATION.md).
+Read-only is not considered a complete confidentiality boundary. An opt-in Lima executor isolates host and Gateway files from Codex and fail-closes readiness unless the guest tool-isolation probe passes. The default LaunchAgent remains host-local, and live VM evidence is still required. See [Threat model](THREAT_MODEL.md) and [Readable-root isolation](READABLE_ROOT_ISOLATION.md).
 
 ## Credential and usage boundaries
 
@@ -121,7 +121,7 @@ Usage records must keep subscription-backed coding separate from Platform API sp
 
 Dedicated-`CODEX_HOME` authentication, retention, and query-derived operational metrics are implemented for trusted local operation. The remaining sequence is:
 
-1. Prove the opt-in Lima readable-root boundary, including guest tool isolation and live acceptance evidence, in [Readable-root isolation design](READABLE_ROOT_ISOLATION.md).
+1. Record live Lima acceptance evidence for the opt-in readable-root boundary in [Readable-root isolation design](READABLE_ROOT_ISOLATION.md). The adapter, guest helpers, and fail-closed isolation probe are implemented; LaunchAgent migration is still blocked.
 2. Codex CLI version/App Server contract checks, encrypted-payload key rotation, and rate-limit visibility in `/v2/metrics` are implemented.
 3. Implement write turns in isolated worktrees with patch/commit artifacts and no blind crash retry.
 4. Add encrypted artifact storage and bounded image generation/editing.

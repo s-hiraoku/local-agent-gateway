@@ -1,4 +1,5 @@
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { spawnSync } from "node:child_process";
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -7,7 +8,9 @@ import { limaAppServerLauncher } from "../src/adapters/codex/launcher.js";
 import { buildLimaHostEnvironment, LimaClient } from "../src/adapters/codex/lima/client.js";
 import {
   DEFAULT_LIMA_INSTANCE,
+  GUEST_APP_SERVER_PATH,
   GUEST_CODEX_HOME,
+  GUEST_EGRESS_HOSTS,
   GUEST_NFTABLES_POLICY,
   GUEST_SNAPSHOT_ROOT,
   GUEST_SUPERVISOR,
@@ -65,7 +68,7 @@ describe("Lima executor contract", () => {
       expect(launch.args).toEqual([
         "shell", DEFAULT_LIMA_INSTANCE, "--",
         "sudo", "-u", GUEST_SUPERVISOR, "-H", "--",
-        "env", `CODEX_HOME=${GUEST_CODEX_HOME}`, "NO_COLOR=1", "TERM=dumb",
+        "env", `CODEX_HOME=${GUEST_CODEX_HOME}`, `PATH=${GUEST_APP_SERVER_PATH}`, "NO_COLOR=1", "TERM=dumb",
         "codex", "app-server"
       ]);
       expect(launch.env.CODEXGW_API_TOKEN).toBeUndefined();
@@ -157,6 +160,9 @@ describe("Lima executor contract", () => {
             args: ["app-server"],
             env: { PATH: process.env.PATH, NO_COLOR: "1" }
           };
+        },
+        async readCliVersion() {
+          return "codex-cli 0.128.0";
         }
       }
     });
@@ -182,8 +188,70 @@ describe("Lima executor contract", () => {
     expect(yaml).toContain(GUEST_CODEX_HOME);
     expect(yaml).toContain("chmod 0711 /var/lib/codexgw/snapshots");
     expect(yaml).toContain("nft");
-    expect(GUEST_NFTABLES_POLICY).toContain("tcp dport 443 accept");
+    expect(yaml).toContain("bubblewrap");
+    expect(yaml).toContain("tcp dport 443 ip daddr @codex4 accept");
+    expect(GUEST_NFTABLES_POLICY).toContain("tcp dport 443 ip daddr @codex4 accept");
+    expect(GUEST_NFTABLES_POLICY).not.toMatch(/tcp dport 443 accept$/m);
     expect(GUEST_NFTABLES_POLICY).toContain("169.254.0.0/16");
+    for (const host of GUEST_EGRESS_HOSTS) {
+      expect(readFileSync(fileURLToPath(new URL("../scripts/lima/guest/egress-hosts", import.meta.url)), "utf8"))
+        .toContain(host);
+    }
+  });
+
+  it("fails closed when the guest tool isolation probe fails", async () => {
+    const root = tempRoot();
+    writeControl(root, "isolation", "fail");
+    await withFakeLima(root, async () => {
+      const lima = client(root);
+      await expect(lima.assertToolIsolation()).rejects.toMatchObject({
+        code: "CODEX_NOT_CONFIGURED",
+        retryable: false
+      });
+      const allowed = new LimaClient({
+        limactl,
+        instance: DEFAULT_LIMA_INSTANCE,
+        guestCodexCommand: "codex",
+        allowUnprovenToolIsolation: true
+      });
+      await expect(allowed.assertToolIsolation()).resolves.toBeUndefined();
+      await expect(limaAppServerLauncher(lima).ensureReady()).rejects.toMatchObject({
+        code: "CODEX_NOT_CONFIGURED"
+      });
+    });
+  });
+
+  it("reads the guest Codex version and cancels snapshot copy", async () => {
+    const root = tempRoot();
+    await withFakeLima(root, async () => {
+      const lima = client(root);
+      await expect(lima.readCliVersion()).resolves.toContain("0.128.0");
+      const aborted = new AbortController();
+      aborted.abort();
+      await expect(lima.copySnapshot(join(root, "repo"), aborted.signal)).rejects.toThrow();
+    });
+  });
+
+  it("injects CODEX_HOME hide-mounts immediately before the bwrap command separator", () => {
+    const wrapperPath = fileURLToPath(new URL("../scripts/lima/guest/bwrap", import.meta.url));
+    const root = tempRoot();
+    const wrapper = join(root, "bwrap");
+    const real = join(root, "real-bwrap");
+    writeFileSync(wrapper, readFileSync(wrapperPath, "utf8").replace(
+      /^REAL_BWRAP=\/usr\/bin\/bwrap$/m,
+      `REAL_BWRAP=${real}`
+    ));
+    writeFileSync(real, "#!/bin/sh\nprintf '%s\\n' \"$@\"\n");
+    chmodSync(wrapper, 0o755);
+    chmodSync(real, 0o755);
+    const injected = spawnSync(wrapper, ["--ro-bind", "/", "/", "--", "/bin/cat", "/secret"], { encoding: "utf8" });
+    expect(injected.status).toBe(0);
+    expect(injected.stdout).toContain("--tmpfs\n/var/lib/codexgw/home");
+    expect(injected.stdout.indexOf("--tmpfs\n/var/lib/codexgw/home"))
+      .toBeGreaterThan(injected.stdout.indexOf("--ro-bind"));
+    expect(injected.stdout).toMatch(/--unsetenv\nCODEX_HOME\n--unsetenv\nOPENAI_API_KEY\n--\n\/bin\/cat/);
+    const rejected = spawnSync(wrapper, ["/bin/true"], { encoding: "utf8" });
+    expect(rejected.status).not.toBe(0);
   });
 
   it("rejects an incomplete host snapshot instead of extracting a partial archive", async () => {

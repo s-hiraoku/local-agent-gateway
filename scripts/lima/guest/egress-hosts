@@ -1,0 +1,13 @@
+# Hostnames allowed for guest Codex login and App Server turns.
+# One hostname per line. Comments and blank lines are ignored.
+# Wildcards are not resolved; add concrete names after a denied connection.
+chatgpt.com
+www.chatgpt.com
+ws.chatgpt.com
+ab.chatgpt.com
+cdn.oaistatic.com
+persistent.oaistatic.com
+api.openai.com
+auth.openai.com
+setup.auth.openai.com
+auth0.openai.com

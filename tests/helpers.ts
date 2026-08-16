@@ -20,6 +20,7 @@ export function testConfig(overrides: Partial<GatewayConfig> = {}): GatewayConfi
     codexExecutor: "host",
     limaCommand: "limactl",
     limaInstance: "codexgw",
+    limaAllowUnprovenToolIsolation: false,
     maxQueuedJobs: 10,
     maxConcurrentJobs: 1,
     maxPromptBytes: 64 * 1024,

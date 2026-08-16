@@ -1,0 +1,34 @@
+#!/bin/bash
+# Hide guest credential homes from Codex tool subprocesses.
+# Codex prefers the first `bwrap` on PATH and separates options from the
+# command with `--`. This wrapper injects hide-mounts immediately before `--`.
+set -euo pipefail
+
+REAL_BWRAP=/usr/bin/bwrap
+if [[ ! -x "$REAL_BWRAP" ]]; then
+  REAL_BWRAP=/usr/sbin/bwrap
+fi
+if [[ ! -x "$REAL_BWRAP" ]]; then
+  echo "system bubblewrap is required" >&2
+  exit 1
+fi
+
+args=("$@")
+separator=-1
+for index in "${!args[@]}"; do
+  if [[ "${args[$index]}" == "--" ]]; then
+    separator=$index
+    break
+  fi
+done
+if [[ "$separator" -lt 0 ]]; then
+  echo "bwrap wrapper requires '--' before the command" >&2
+  exit 1
+fi
+
+exec "$REAL_BWRAP" "${args[@]:0:$separator}" \
+  --tmpfs /var/lib/codexgw/home \
+  --tmpfs /var/lib/codexgw/tool \
+  --unsetenv CODEX_HOME \
+  --unsetenv OPENAI_API_KEY \
+  "${args[@]:$separator}"

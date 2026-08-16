@@ -35,7 +35,7 @@ Output filtering is not an acceptable substitute because secrets can be transfor
 
 The optional Responses compatibility interface increases the value of a stolen Gateway token because it grants subscription-backed inference without requiring clients to use the `/v2` job API. Requests still run as durable inference jobs. The interface remains inside the same trusted-owner boundary: enabling it for untrusted clients or prompts is prohibited until readable-root isolation is implemented and verified.
 
-The selected target is an opt-in Lima VM with a per-job read-only snapshot. Required denial tests are specified in [Readable-root isolation design](READABLE_ROOT_ISOLATION.md). That adapter is not the default LaunchAgent path, and guest tool isolation is not yet proven.
+The selected target is an opt-in Lima VM with a per-job read-only snapshot, a PATH-prefixed `bwrap` hide of guest `CODEX_HOME`, and hostname-resolved TCP 443. Required denial tests are specified in [Readable-root isolation design](READABLE_ROOT_ISOLATION.md). That adapter is not the default LaunchAgent path. Live proof that a real Codex tool subprocess takes the wrapper path is still required.
 
 ## Trust expansion rules
 

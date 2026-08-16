@@ -1,5 +1,13 @@
 # Decisions
 
+## 2026-08-15: Fail-closed guest tool isolation and hostname-resolved egress
+
+- Decision: When `CODEXGW_CODEX_EXECUTOR=lima`, put a `bwrap` wrapper first on the guest App Server PATH so Codex tool sandboxes hide `CODEX_HOME`. `/readyz` runs a synthetic isolation probe and fails closed unless it passes or the operator sets `CODEXGW_LIMA_ALLOW_UNPROVEN_TOOL_ISOLATION=true`. Guest TCP 443 is limited to resolved names in `scripts/lima/guest/egress-hosts`.
+- Context: Issue #33 required proof that tool subprocesses cannot read guest authentication state, plus hostname pinning after private ranges were already denied.
+- Alternatives considered: Changing App Server's UID, writing guest `config.toml`, treating Codex `read-only` as sufficient, allowing all public HTTPS, and migrating LaunchAgent immediately.
+- Rationale: Codex Linux tools already enter `bwrap` and separate options with `--`, so hide-mounts can be injected without a guest config file. Prefer denial when the probe fails. IP sets are an increment over open 443; SNI inspection remains a follow-up.
+- Consequences: Lima readiness now depends on installed guest helpers. Live Codex tool-path evidence and LaunchAgent migration remain blocked. Shared CDN IPs and open DNS are documented residuals.
+
 ## 2026-08-15: Opt-in Lima executor for the first readable-root milestone
 
 - Decision: Add `CODEXGW_CODEX_EXECUTOR=lima` as an opt-in Codex executor. One long-lived Lima `vz` VM runs Codex only. Gateway, SQLite, and secrets stay on the host. Each job copies a read-only snapshot over `limactl shell` stdio. The default executor remains `host`.

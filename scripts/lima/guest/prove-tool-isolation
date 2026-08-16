@@ -1,0 +1,56 @@
+#!/bin/bash
+# Prove that a Codex-equivalent tool process cannot read guest CODEX_HOME
+# while the supervisor identity still can. Run as root inside the guest.
+set -euo pipefail
+
+HOME_DIR=/var/lib/codexgw/home
+CANARY="$HOME_DIR/.codexgw-isolation-canary"
+WRAPPER=/usr/local/lib/codexgw/bin/bwrap
+TOOL_PATH=/usr/local/lib/codexgw/bin:/usr/sbin:/usr/bin:/sbin:/bin
+
+cleanup() {
+  rm -f "$CANARY"
+}
+trap cleanup EXIT
+
+if [[ ! -x "$WRAPPER" ]]; then
+  echo "guest bwrap wrapper is not installed" >&2
+  exit 1
+fi
+if ! id -u codexgw >/dev/null 2>&1 || ! id -u codexgw-tool >/dev/null 2>&1; then
+  echo "guest users codexgw and codexgw-tool are required" >&2
+  exit 1
+fi
+
+umask 077
+printf '%s\n' "codexgw-isolation-canary" > "$CANARY"
+chown codexgw:codexgw "$CANARY"
+chmod 600 "$CANARY"
+
+if ! sudo -u codexgw -H -- cat "$CANARY" >/dev/null; then
+  echo "supervisor cannot read the CODEX_HOME canary" >&2
+  exit 1
+fi
+
+if sudo -u codexgw-tool -H -- cat "$CANARY" >/dev/null 2>&1; then
+  echo "codexgw-tool can read the CODEX_HOME canary" >&2
+  exit 1
+fi
+
+resolved="$(sudo -u codexgw -H -- env PATH="$TOOL_PATH" command -v bwrap || true)"
+if [[ "$resolved" != "$WRAPPER" ]]; then
+  echo "App Server PATH does not resolve bwrap to the isolation wrapper" >&2
+  exit 1
+fi
+
+if sudo -u codexgw -H -- env PATH="$TOOL_PATH" \
+  bwrap --ro-bind / / --dev /dev --proc /proc --tmpfs /tmp -- /bin/cat "$CANARY" \
+  >/dev/null 2>&1; then
+  echo "sandboxed tool process can read the CODEX_HOME canary" >&2
+  exit 1
+fi
+
+if sudo -u codexgw -H -- env PATH="$TOOL_PATH" bwrap /bin/true >/dev/null 2>&1; then
+  echo "bwrap wrapper accepted a command without '--'" >&2
+  exit 1
+fi

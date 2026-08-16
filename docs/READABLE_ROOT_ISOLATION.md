@@ -7,8 +7,8 @@ Operator choices for the first VM milestone are recorded below. An opt-in Lima e
 This milestone isolates host and Gateway assets from the Codex process. It is not a completed confidentiality boundary:
 
 - the default LaunchAgent still runs Codex on the host;
-- guest tool subprocesses still run as the credential-owning supervisor, so they can read `CODEX_HOME` until that inner denial is proven;
-- guest egress allows any public HTTPS (TCP 443) after private ranges are denied; hostname pinning is a residual;
+- guest tool isolation is enforced by a PATH-prefixed `bwrap` wrapper plus a fail-closed `/readyz` probe; live proof that a real Codex tool subprocess takes that path is still required;
+- guest egress allows TCP 443 only to resolved allowlist addresses. Shared CDN IPs and open DNS remain residuals;
 - live VM acceptance evidence is not yet recorded.
 
 Until the acceptance tests below pass, the Gateway supports only trusted clients, prompts, and repositories.
@@ -49,13 +49,15 @@ These choices were made for issue #33. They are not inferred from ordinary repos
 | VM | One long-lived Lima `vz` instance. Gateway, SQLite, and secrets stay on the host. The guest runs Codex only. |
 | Transport | Lima SSH + stdio (`limactl shell` → `codex app-server`). Clients cannot pick the command, path, or VM. |
 | Repositories | Per-job read-only snapshot copy into the guest. No host-parent mount. |
-| Network | Deny by default. Block RFC1918, link-local, and metadata ranges. Allow DNS and TCP 443. Hostname pinning remains a residual. |
-| Credentials | Two guest users (`codexgw` owns `CODEX_HOME`; `codexgw-tool` is reserved for tools). App Server currently runs as the supervisor, so tool isolation is not proven. |
+| Network | Deny by default. Block RFC1918, link-local, and metadata ranges. Allow DNS. Allow TCP 443 only to resolved names in `scripts/lima/guest/egress-hosts`. |
+| Credentials | Two guest users (`codexgw` owns `CODEX_HOME`; `codexgw-tool` cannot read it). App Server still runs as the supervisor. Tool processes are expected to enter Codex `bwrap`, which the guest PATH wrapper hides `CODEX_HOME` from. |
 | Auth backup | Guest `CODEX_HOME` stays in the VM. Host backup remains the database and Keychain. Recreating the VM requires `codex login` in the guest. |
 | CLI pin | Bump the guest CLI only together with the supported host Codex CLI range. |
 | Default | Executor `host` so the existing LaunchAgent does not break. Lima is opt-in through `CODEXGW_CODEX_EXECUTOR=lima`. |
 
 Runtime model: one long-lived Lima VM; one App Server process and one snapshot per job; delete the snapshot after the turn. Snapshot directories are group-readable only (`u=rx,g=rx,o=`) under a non-listable `/var/lib/codexgw/snapshots` (`0711`). Sibling isolation still depends on unguessable snapshot names while App Server shares the `codexgw` identity.
+
+When `CODEXGW_CODEX_EXECUTOR=lima`, `/readyz` runs `/usr/local/lib/codexgw/prove-tool-isolation` inside the guest. A failed probe returns `CODEX_NOT_CONFIGURED` and jobs do not start. Set `CODEXGW_LIMA_ALLOW_UNPROVEN_TOOL_ISOLATION=true` only after acknowledging that residual, and only for trusted prompts.
 
 ## Controls that do not satisfy the objective
 
@@ -73,22 +75,23 @@ These remain useful defense in depth, but none proves that unrelated readable ho
 ## Provisioning sequence
 
 1. Install Lima and create the pinned instance once from `scripts/lima/codexgw.yaml`. Do not auto-create the VM from `/readyz`.
-2. Install a pinned Codex CLI on the guest `PATH`. Keep Gateway and SQLite on the host control plane.
-3. Confirm guest paths: `CODEX_HOME=/var/lib/codexgw/home`, snapshots under `/var/lib/codexgw/snapshots`, no host-parent mount, and no guest `config.toml`.
-4. Authenticate interactively inside the guest as `codexgw`. Do not copy host authentication state.
-5. Set `CODEXGW_CODEX_EXECUTOR=lima`. The adapter starts only the fixed `limactl` transport; clients still select a public repository ID.
-6. Separate the credential-owning supervisor from the tool executor, scrub inherited environment/file descriptors, and prove that tool subprocesses cannot read `CODEX_HOME` before using real authentication with untrusted prompts.
-7. Run the remaining acceptance suite and a backup/restore rehearsal before migrating the resident LaunchAgent.
+2. Run `scripts/lima/install-guest-helpers.sh` to install the `bwrap` wrapper, isolation probe, and egress allowlist timer. Empty nftables sets mean TCP 443 is denied until this step.
+3. Install a pinned Codex CLI on the guest `PATH`. Keep Gateway and SQLite on the host control plane.
+4. Confirm guest paths: `CODEX_HOME=/var/lib/codexgw/home`, snapshots under `/var/lib/codexgw/snapshots`, no host-parent mount, and no guest `config.toml`.
+5. Authenticate interactively inside the guest as `codexgw`. Do not copy host authentication state.
+6. Set `CODEXGW_CODEX_EXECUTOR=lima`. The adapter starts only the fixed `limactl` transport; clients still select a public repository ID.
+7. Run `scripts/lima/accept.sh`, then a live coding and inference turn, and a backup/restore rehearsal before migrating the resident LaunchAgent.
 
-Create and authenticate the instance:
+Create, install helpers, and authenticate the instance:
 
 ```bash
 limactl start --name=codexgw scripts/lima/codexgw.yaml
+scripts/lima/install-guest-helpers.sh
 # install a pinned Codex CLI on the guest PATH, then:
 limactl shell codexgw -- sudo -u codexgw -H env CODEX_HOME=/var/lib/codexgw/home codex login
 ```
 
-If the named instance is missing, readiness fails closed with `CODEX_NOT_CONFIGURED`. A `Stopped` instance is started; the Gateway does not create a new VM.
+If the named instance is missing, readiness fails closed with `CODEX_NOT_CONFIGURED`. A `Stopped` instance is started; the Gateway does not create a new VM. If the isolation probe fails, readiness also fails closed unless the operator explicitly acknowledges the residual.
 
 ## Acceptance tests
 
@@ -107,7 +110,7 @@ The boundary is not complete until evidence records all of the following:
 - backup and restore preserve the database and matching encryption key without exporting Codex or Gateway credentials into the repository;
 - removing a repository mapping makes its guest data unavailable before the next job starts.
 
-Use synthetic canary files rather than real credentials for denial tests. Store commands, versions, results, and residual limitations in `codex/ledger/verification.md`.
+Use synthetic canary files rather than real credentials for denial tests. Store commands, versions, results, and residual limitations in `codex/ledger/verification.md`. `scripts/lima/accept.sh` covers the local filesystem, wrapper, and private-egress probes. It does not replace the live ChatGPT-authenticated runs.
 
 ## Migration and rollback
 
@@ -117,7 +120,8 @@ Rollback by setting the executor back to `host`, restarting the existing LaunchA
 
 ## Remaining residuals
 
-- Prove that guest tool subprocesses cannot read `CODEX_HOME` while App Server authentication still works.
-- Replace public-HTTPS allowance with a hostname allowlist once the required Codex endpoints are known.
+- Prove that a real Codex tool subprocess, not only the synthetic probe, cannot read `CODEX_HOME` while App Server authentication still works.
+- IP-set hostname pinning cannot distinguish SNI on shared CDN addresses; UDP/TCP 53 remains open for resolution.
+- A tool that bypasses Codex `bwrap` and execs `/usr/bin/bwrap` or runs unsandboxed as `codexgw` can still read `CODEX_HOME`.
 - Wire Lima into the versioned LaunchAgent only after live acceptance evidence exists.
-- Record the acceptance-suite evidence in `codex/ledger/verification.md`.
+- Record the live acceptance-suite evidence in `codex/ledger/verification.md`.
