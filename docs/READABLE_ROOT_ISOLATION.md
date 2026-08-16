@@ -74,17 +74,23 @@ These remain useful defense in depth, but none proves that unrelated readable ho
 
 ## Provisioning sequence
 
-1. Install Lima and create the pinned instance once from `scripts/lima/codexgw.yaml`. Do not auto-create the VM from `/readyz`.
-2. Run `scripts/lima/install-guest-helpers.sh` to install the `bwrap` wrapper, isolation probe, and egress allowlist timer. Empty nftables sets mean TCP 443 is denied until this step.
-3. Install a pinned Codex CLI on the guest `PATH`. Keep Gateway and SQLite on the host control plane.
-4. Confirm guest paths: `CODEX_HOME=/var/lib/codexgw/home`, snapshots under `/var/lib/codexgw/snapshots`, no host-parent mount, and no guest `config.toml`.
-5. Authenticate interactively inside the guest as `codexgw`. Do not copy host authentication state.
-6. Set `CODEXGW_CODEX_EXECUTOR=lima`. The adapter starts only the fixed `limactl` transport; clients still select a public repository ID.
-7. Run `scripts/lima/accept.sh`, then a live coding and inference turn, and a backup/restore rehearsal before migrating the resident LaunchAgent.
+1. On the Mac host, install Lima >= 1.0 (`vz` needs macOS 13+). Do not auto-create the VM from `/readyz`.
+2. Create the pinned instance once from `scripts/lima/codexgw.yaml`.
+3. Run `scripts/lima/install-guest-helpers.sh` to install the `bwrap` wrapper, isolation probe, and egress allowlist timer. Empty nftables sets mean TCP 443 is denied until this step.
+4. Install a pinned Codex CLI on the guest `PATH`. Keep Gateway and SQLite on the host control plane.
+5. Confirm guest paths: `CODEX_HOME=/var/lib/codexgw/home`, snapshots under `/var/lib/codexgw/snapshots`, no host-parent mount, and no guest `config.toml`.
+6. Authenticate interactively inside the guest as `codexgw`. Do not copy host authentication state.
+7. Set `CODEXGW_CODEX_EXECUTOR=lima`. The adapter starts only the fixed `limactl` transport; clients still select a public repository ID.
+8. Run `scripts/lima/accept.sh`, then a live coding and inference turn, and a backup/restore rehearsal before migrating the resident LaunchAgent.
 
-Create, install helpers, and authenticate the instance:
+Install Lima, create the instance, install helpers, and authenticate:
 
 ```bash
+# macOS 13+, Homebrew. After install, open a new shell if `limactl` is still missing.
+brew install lima
+limactl --version   # must be >= 1.0.0
+command -v limactl  # Apple Silicon: /opt/homebrew/bin/limactl
+
 limactl start --name=codexgw scripts/lima/codexgw.yaml
 scripts/lima/install-guest-helpers.sh
 # install a pinned Codex CLI on the guest PATH, then:

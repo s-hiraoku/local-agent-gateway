@@ -8,7 +8,8 @@ INSTANCE="${CODEXGW_LIMA_INSTANCE:-codexgw}"
 LIMA="${CODEXGW_LIMA_COMMAND:-limactl}"
 
 if ! command -v "$LIMA" >/dev/null 2>&1; then
-  echo "limactl is not available" >&2
+  echo "limactl is not available. On macOS 13+: brew install lima" >&2
+  echo "Then open a new shell and retry. Apple Silicon PATH is /opt/homebrew/bin." >&2
   exit 1
 fi
 
