@@ -91,7 +91,7 @@ Important optional variables:
 | `CODEXGW_INFERENCE_PROVIDER` | `codex`; set to `claude` to run inference turns on Claude Code |
 | `CODEXGW_CLAUDE_COMMAND` | `claude` |
 | `CODEXGW_CLAUDE_MODEL` | Claude account/config default |
-| `CODEXGW_CODEX_EXECUTOR` | `host`; set to `lima` to run Codex inside the operator-created Lima VM |
+| `CODEXGW_CODEX_EXECUTOR` | `host`; set to `lima` only after installing Lima (`brew install lima`) and creating the VM |
 | `CODEXGW_LIMA_COMMAND` | `limactl` |
 | `CODEXGW_LIMA_INSTANCE` | `codexgw` |
 | `CODEXGW_LIMA_ALLOW_UNPROVEN_TOOL_ISOLATION` | `false`; if the guest isolation probe fails, `/readyz` stays closed unless this is `true` |
