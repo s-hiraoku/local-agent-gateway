@@ -47,7 +47,7 @@ provision:
     export DEBIAN_FRONTEND=noninteractive
     if command -v apt-get >/dev/null 2>&1; then
       apt-get update -qq
-      apt-get install -y --no-install-recommends nftables bubblewrap
+      apt-get install -y --no-install-recommends nftables bubblewrap ca-certificates
     fi
     if ! id -u codexgw >/dev/null 2>&1; then
       useradd --system --home /var/lib/codexgw/home --shell /usr/sbin/nologin --create-home codexgw

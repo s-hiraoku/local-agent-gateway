@@ -60,7 +60,8 @@ while IFS= read -r line || [[ -n "$line" ]]; do
       fi
       v4+=("$addr")
     fi
-  done < <(getent ahosts "$host" | awk '{ print $1 }' | sort -u)
+  done < <(timeout 8 getent ahosts "$host" | awk '{ print $1 }' | sort -u || true)
+  echo "resolved $host v4=${#v4[@]} v6=${#v6[@]}" >&2
 done < "$HOSTS_FILE"
 
 nft flush set inet filter codex4
@@ -71,3 +72,4 @@ fi
 if [[ "${#v6[@]}" -gt 0 ]]; then
   nft add element inet filter codex6 "{ $(printf '%s, ' "${v6[@]}" | sed 's/, $//') }"
 fi
+echo "nft allowlist v4=${#v4[@]} v6=${#v6[@]}"
