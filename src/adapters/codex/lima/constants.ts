@@ -6,6 +6,7 @@ export const GUEST_SNAPSHOT_ROOT = "/var/lib/codexgw/snapshots";
 export const GUEST_HELPER_BIN = "/usr/local/lib/codexgw/bin";
 export const GUEST_ISOLATION_PROBE = "/usr/local/lib/codexgw/prove-tool-isolation";
 export const GUEST_APP_SERVER_PATH = `${GUEST_HELPER_BIN}:/usr/sbin:/usr/bin:/sbin:/bin`;
+export const GUEST_SSL_CERT_FILE = "/etc/ssl/certs/ca-certificates.crt";
 
 export const GUEST_EGRESS_HOSTS = [
   "chatgpt.com",
@@ -52,6 +53,7 @@ table inet filter {
     tcp dport 53 accept
     tcp dport 443 ip daddr @codex4 accept
     tcp dport 443 ip6 daddr @codex6 accept
+    tcp dport 443 reject with tcp reset comment "codexgw-https-fastfail"
   }
 }
 `.trim();

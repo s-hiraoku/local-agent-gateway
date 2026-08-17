@@ -95,12 +95,20 @@ limactl start --name=codexgw scripts/lima/codexgw.yaml
 scripts/lima/install-guest-helpers.sh
 # install a pinned Linux Codex CLI on the guest PATH, then authenticate.
 # Keep `codex login` running in the guest and, in another host terminal:
-#   ssh -F ~/.lima/codexgw/ssh.config -N -L 1455:127.0.0.1:1455 lima-codexgw
+#   ssh -F ~/.lima/codexgw/ssh.config -N \
+#     -L 127.0.0.1:1455:127.0.0.1:1455 \
+#     -L '[::1]:1455:127.0.0.1:1455' \
+#     lima-codexgw
 # Open the printed URL in the host browser. The callback is http://localhost:1455
 # and must be forwarded into the guest. Do not copy host auth files.
+# Token exchange is a guest HTTPS POST to auth.openai.com. If the browser
+# shows token_exchange_failed, do not retry login until this probe passes:
+#   limactl shell codexgw -- sudo -n /usr/local/lib/codexgw/prove-login-egress
 limactl shell codexgw
 # inside the guest:
-# sudo -u codexgw -H env CODEX_HOME=/var/lib/codexgw/home PATH=/usr/local/bin:/usr/bin:/bin codex login
+# sudo -u codexgw -H env CODEX_HOME=/var/lib/codexgw/home \
+#   SSL_CERT_FILE=/etc/ssl/certs/ca-certificates.crt \
+#   PATH=/usr/local/bin:/usr/bin:/bin codex login
 ```
 
 If the named instance is missing, readiness fails closed with `CODEX_NOT_CONFIGURED`. A `Stopped` instance is started; the Gateway does not create a new VM. If the isolation probe fails, readiness also fails closed unless the operator explicitly acknowledges the residual.
@@ -133,7 +141,7 @@ Rollback by setting the executor back to `host`, restarting the existing LaunchA
 ## Remaining residuals
 
 - Prove that a real Codex tool subprocess, not only the synthetic probe, cannot read `CODEX_HOME` while App Server authentication still works.
-- IP-set hostname pinning cannot distinguish SNI on shared CDN addresses; UDP/TCP 53 remains open for resolution.
+- IP-set hostname pinning cannot distinguish SNI on shared CDN addresses; UDP/TCP 53 remains open for resolution. `refresh-egress` pins resolved IPv4 allowlist addresses in `/etc/hosts`. Guest HTTPS is IPv4-only so Lima vz IPv6 black-holes cannot stall token exchange; unmatched TCP 443 is reset.
 - A tool that bypasses Codex `bwrap` and execs `/usr/bin/bwrap` or runs unsandboxed as `codexgw` can still read `CODEX_HOME`.
 - Wire Lima into the versioned LaunchAgent only after live acceptance evidence exists.
 - Record the live acceptance-suite evidence in `codex/ledger/verification.md`.

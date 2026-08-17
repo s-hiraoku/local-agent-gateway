@@ -47,11 +47,14 @@ done
 echo "== dns"
 guest getent ahosts chatgpt.com >/dev/null
 
+echo "== login egress"
+guest /usr/local/lib/codexgw/prove-login-egress
+
 echo
-echo "Filesystem, tool-isolation, and private-egress probes passed."
+echo "Filesystem, tool-isolation, private-egress, and login-egress probes passed."
 echo "Still required before treating #33 as complete:"
 echo "  1. Install a pinned Codex CLI on the guest PATH"
-echo "  2. limactl shell $INSTANCE -- sudo -u codexgw -H env CODEX_HOME=/var/lib/codexgw/home codex login"
+echo "  2. limactl shell $INSTANCE -- sudo -u codexgw -H env CODEX_HOME=/var/lib/codexgw/home SSL_CERT_FILE=/etc/ssl/certs/ca-certificates.crt PATH=/usr/local/bin:/usr/bin:/bin codex login"
 echo "  3. Record a live structured coding run and an inference run"
 echo "  4. Keep the LaunchAgent on host until those live runs are recorded"
 echo "Append commands, versions, and residuals to codex/ledger/verification.md"

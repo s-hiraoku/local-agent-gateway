@@ -3,7 +3,8 @@
 # Create once: limactl start --name=codexgw scripts/lima/codexgw.yaml
 # Then install helpers and authenticate:
 #   scripts/lima/install-guest-helpers.sh
-#   limactl shell codexgw -- sudo -u codexgw -H env CODEX_HOME=/var/lib/codexgw/home codex login
+#   limactl shell codexgw -- sudo -u codexgw -H env CODEX_HOME=/var/lib/codexgw/home \
+#     SSL_CERT_FILE=/etc/ssl/certs/ca-certificates.crt PATH=/usr/local/bin:/usr/bin:/bin codex login
 
 minimumLimaVersion: "1.0.0"
 vmType: vz
@@ -107,6 +108,7 @@ provision:
         tcp dport 53 accept
         tcp dport 443 ip daddr @codex4 accept
         tcp dport 443 ip6 daddr @codex6 accept
+        tcp dport 443 reject with tcp reset comment "codexgw-https-fastfail"
       }
     }
     NFT

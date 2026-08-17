@@ -1,9 +1,19 @@
 #!/bin/bash
-# Resolve the hostname allowlist into nftables IPv4/IPv6 sets.
+# Resolve the hostname allowlist into nftables IPv4 sets and pin the same
+# addresses in /etc/hosts so later lookups reuse allowlisted IPs.
+# AAAA records are not allowlisted: Lima vz NAT is IPv4, and an accepted
+# IPv6 destination can black-hole Happy Eyeballs during token exchange.
 # Private, link-local, and metadata addresses are never added.
 set -euo pipefail
 
 HOSTS_FILE=/etc/codexgw/egress-hosts
+HOSTS_ETC=/etc/hosts
+HOSTS_BEGIN="# BEGIN CODEXGW EGRESS"
+HOSTS_END="# END CODEXGW EGRESS"
+GAI_FILE=/etc/gai.conf
+GAI_BEGIN="# BEGIN CODEXGW GAI"
+GAI_END="# END CODEXGW GAI"
+
 if [[ ! -f "$HOSTS_FILE" ]]; then
   echo "missing $HOSTS_FILE" >&2
   exit 1
@@ -24,18 +34,58 @@ is_blocked_v4() {
   return 1
 }
 
-is_blocked_v6() {
-  local ip="$1"
-  local lowered
-  lowered="$(printf '%s' "$ip" | tr 'A-F' 'a-f')"
-  case "$lowered" in
-    fe80:*|fc*|fd*|::1|::) return 0 ;;
-  esac
-  return 1
+collect_addrs() {
+  local host="$1"
+  local round
+  for round in 1 2 3; do
+    timeout 8 getent ahostsv4 "$host" 2>/dev/null || true
+  done | awk '{ print $1 }' | sort -u
+}
+
+ensure_https_fastfail() {
+  if nft list chain inet filter output 2>/dev/null | grep -Fq "codexgw-https-fastfail"; then
+    return
+  fi
+  nft add rule inet filter output tcp dport 443 reject with tcp reset comment "codexgw-https-fastfail"
+}
+
+apply_ipv4_gai() {
+  local tmp
+  tmp="$(mktemp)"
+  if [[ -f "$GAI_FILE" ]]; then
+    awk -v begin="$GAI_BEGIN" -v end="$GAI_END" '
+      $0 == begin { skip=1; next }
+      $0 == end { skip=0; next }
+      skip != 1 { print }
+    ' "$GAI_FILE" > "$tmp"
+  fi
+  printf '\n%s\nprecedence ::ffff:0:0/96  100\n%s\n' "$GAI_BEGIN" "$GAI_END" >> "$tmp"
+  cat "$tmp" > "$GAI_FILE"
+  rm -f "$tmp"
+}
+
+apply_hosts_pin() {
+  local pin="$1"
+  local tmp
+  tmp="$(mktemp)"
+  awk -v begin="$HOSTS_BEGIN" -v end="$HOSTS_END" '
+    $0 == begin { skip=1; next }
+    $0 == end { skip=0; next }
+    skip != 1 { print }
+  ' "$HOSTS_ETC" > "$tmp"
+  printf '\n%s\n' "$HOSTS_BEGIN" >> "$tmp"
+  if [[ -s "$pin" ]]; then
+    cat "$pin" >> "$tmp"
+  fi
+  printf '%s\n' "$HOSTS_END" >> "$tmp"
+  cat "$tmp" > "$HOSTS_ETC"
+  rm -f "$tmp"
 }
 
 v4=()
-v6=()
+pin="$(mktemp)"
+trap 'rm -f "$pin"' EXIT
+
 while IFS= read -r line || [[ -n "$line" ]]; do
   host="${line%%#*}"
   host="${host%"${host##*[![:space:]]}"}"
@@ -45,31 +95,38 @@ while IFS= read -r line || [[ -n "$line" ]]; do
     echo "wildcard hostnames are not resolved: $host" >&2
     exit 1
   fi
+  host_v4=0
   while IFS= read -r addr; do
     [[ -z "$addr" ]] && continue
     if [[ "$addr" == *:* ]]; then
-      if is_blocked_v6 "$addr"; then
-        echo "refusing private or link-local AAAA for $host: $addr" >&2
-        continue
-      fi
-      v6+=("$addr")
-    else
-      if is_blocked_v4 "$addr"; then
-        echo "refusing private or link-local A for $host: $addr" >&2
-        continue
-      fi
-      v4+=("$addr")
+      echo "skipping AAAA for $host: $addr (IPv4-only guest HTTPS)" >&2
+      continue
     fi
-  done < <(timeout 8 getent ahosts "$host" | awk '{ print $1 }' | sort -u || true)
-  echo "resolved $host v4=${#v4[@]} v6=${#v6[@]}" >&2
+    if is_blocked_v4 "$addr"; then
+      echo "refusing private or link-local A for $host: $addr" >&2
+      continue
+    fi
+    v4+=("$addr")
+    printf '%s %s\n' "$addr" "$host" >> "$pin"
+    host_v4=$((host_v4 + 1))
+  done < <(collect_addrs "$host")
+  echo "resolved $host v4=$host_v4" >&2
 done < "$HOSTS_FILE"
+
+if [[ -s "$pin" ]]; then
+  sort -u "$pin" -o "$pin"
+fi
+apply_hosts_pin "$pin"
+apply_ipv4_gai
+ensure_https_fastfail
+
+if [[ "${#v4[@]}" -gt 0 ]]; then
+  mapfile -t v4 < <(printf '%s\n' "${v4[@]}" | sort -u)
+fi
 
 nft flush set inet filter codex4
 nft flush set inet filter codex6
 if [[ "${#v4[@]}" -gt 0 ]]; then
   nft add element inet filter codex4 "{ $(printf '%s, ' "${v4[@]}" | sed 's/, $//') }"
 fi
-if [[ "${#v6[@]}" -gt 0 ]]; then
-  nft add element inet filter codex6 "{ $(printf '%s, ' "${v6[@]}" | sed 's/, $//') }"
-fi
-echo "nft allowlist v4=${#v4[@]} v6=${#v6[@]}"
+echo "nft allowlist v4=${#v4[@]} v6=0"

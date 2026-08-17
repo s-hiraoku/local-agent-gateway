@@ -7,7 +7,8 @@ import {
   GUEST_SNAPSHOT_ROOT,
   GUEST_SUPERVISOR,
   GUEST_CODEX_HOME,
-  GUEST_ISOLATION_PROBE
+  GUEST_ISOLATION_PROBE,
+  GUEST_SSL_CERT_FILE
 } from "./constants.js";
 
 export type LimaClientConfig = {
@@ -41,7 +42,7 @@ export class LimaClient {
       args: [
         "shell", this.config.instance, "--",
         "sudo", "-u", GUEST_SUPERVISOR, "-H", "--",
-        "env", `CODEX_HOME=${GUEST_CODEX_HOME}`, `PATH=${GUEST_APP_SERVER_PATH}`, "NO_COLOR=1", "TERM=dumb",
+        "env", `CODEX_HOME=${GUEST_CODEX_HOME}`, `PATH=${GUEST_APP_SERVER_PATH}`, `SSL_CERT_FILE=${GUEST_SSL_CERT_FILE}`, "NO_COLOR=1", "TERM=dumb",
         this.config.guestCodexCommand, "app-server"
       ],
       env: buildLimaHostEnvironment(process.env)
@@ -84,7 +85,7 @@ export class LimaClient {
     return this.exec([
       this.config.limactl, "shell", this.config.instance, "--",
       "sudo", "-u", GUEST_SUPERVISOR, "-H", "--",
-      "env", `CODEX_HOME=${GUEST_CODEX_HOME}`, `PATH=${GUEST_APP_SERVER_PATH}`, "NO_COLOR=1", "TERM=dumb",
+      "env", `CODEX_HOME=${GUEST_CODEX_HOME}`, `PATH=${GUEST_APP_SERVER_PATH}`, `SSL_CERT_FILE=${GUEST_SSL_CERT_FILE}`, "NO_COLOR=1", "TERM=dumb",
       this.config.guestCodexCommand, "--version"
     ], 10_000, signal);
   }
