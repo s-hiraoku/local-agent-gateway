@@ -181,6 +181,7 @@ describe("Lima executor contract", () => {
   it("keeps the Lima template free of host mounts and records both guest users", () => {
     const yaml = readFileSync(limaYaml, "utf8");
     expect(yaml).toContain("plain: true");
+    expect(yaml).toContain("127.0.1.1");
     expect(yaml).toContain("vmOpts:");
     expect(yaml).not.toMatch(/^rosetta:/m);
     expect(yaml).toContain("mounts: []");

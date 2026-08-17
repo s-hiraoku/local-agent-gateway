@@ -31,6 +31,9 @@ copy_guest_file() {
   guest chmod "$mode" "$dest"
 }
 
+echo "ensuring guest hostname resolves locally"
+"$LIMA" shell "$INSTANCE" -- sudo -n sh -c 'grep -Fq "$(hostname)" /etc/hosts || printf "127.0.1.1 %s\n" "$(hostname)" >> /etc/hosts'
+
 guest mkdir -p /usr/local/lib/codexgw/bin /etc/codexgw /var/lib/codexgw/home /var/lib/codexgw/snapshots
 copy_guest_file "$ROOT/guest/bwrap" /usr/local/lib/codexgw/bin/bwrap 0755
 copy_guest_file "$ROOT/guest/prove-tool-isolation" /usr/local/lib/codexgw/prove-tool-isolation 0755

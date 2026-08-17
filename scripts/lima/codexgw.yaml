@@ -48,6 +48,9 @@ provision:
       useradd --system --home /var/lib/codexgw/tool --shell /usr/sbin/nologin --create-home codexgw-tool
     fi
     mkdir -p /var/lib/codexgw/home /var/lib/codexgw/snapshots /var/lib/codexgw/tool /usr/local/lib/codexgw/bin /etc/codexgw
+    if ! grep -Fq "$(hostname)" /etc/hosts; then
+      printf '127.0.1.1 %s\n' "$(hostname)" >> /etc/hosts
+    fi
     chown -R codexgw:codexgw /var/lib/codexgw/home
     chmod 700 /var/lib/codexgw/home
     chown root:root /var/lib/codexgw/snapshots
