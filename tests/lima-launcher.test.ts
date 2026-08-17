@@ -13,6 +13,7 @@ import {
   GUEST_EGRESS_HOSTS,
   GUEST_NFTABLES_POLICY,
   GUEST_SNAPSHOT_ROOT,
+  GUEST_SSL_CERT_FILE,
   GUEST_SUPERVISOR,
   GUEST_TOOL_USER
 } from "../src/adapters/codex/lima/constants.js";
@@ -68,7 +69,7 @@ describe("Lima executor contract", () => {
       expect(launch.args).toEqual([
         "shell", DEFAULT_LIMA_INSTANCE, "--",
         "sudo", "-u", GUEST_SUPERVISOR, "-H", "--",
-        "env", `CODEX_HOME=${GUEST_CODEX_HOME}`, `PATH=${GUEST_APP_SERVER_PATH}`, "NO_COLOR=1", "TERM=dumb",
+        "env", `CODEX_HOME=${GUEST_CODEX_HOME}`, `PATH=${GUEST_APP_SERVER_PATH}`, `SSL_CERT_FILE=${GUEST_SSL_CERT_FILE}`, "NO_COLOR=1", "TERM=dumb",
         "codex", "app-server"
       ]);
       expect(launch.env.CODEXGW_API_TOKEN).toBeUndefined();
@@ -181,10 +182,13 @@ describe("Lima executor contract", () => {
   it("keeps the Lima template free of host mounts and records both guest users", () => {
     const yaml = readFileSync(limaYaml, "utf8");
     expect(yaml).toContain("plain: true");
+    expect(yaml).toContain("127.0.1.1");
     expect(yaml).toContain("vmOpts:");
     expect(yaml).not.toMatch(/^rosetta:/m);
     expect(yaml).toContain("mounts: []");
     expect(yaml).toContain("networks: []");
+    expect(yaml).toContain("guestPort: 1455");
+    expect(yaml).toContain('hostIP: "127.0.0.1"');
     expect(yaml).toContain(GUEST_SUPERVISOR);
     expect(yaml).toContain(GUEST_TOOL_USER);
     expect(yaml).toContain(GUEST_CODEX_HOME);
@@ -192,9 +196,23 @@ describe("Lima executor contract", () => {
     expect(yaml).toContain("nft");
     expect(yaml).toContain("bubblewrap");
     expect(yaml).toContain("tcp dport 443 ip daddr @codex4 accept");
+    expect(yaml).toContain("reject with tcp reset");
     expect(GUEST_NFTABLES_POLICY).toContain("tcp dport 443 ip daddr @codex4 accept");
+    expect(GUEST_NFTABLES_POLICY).toContain("reject with tcp reset");
     expect(GUEST_NFTABLES_POLICY).not.toMatch(/tcp dport 443 accept$/m);
-    expect(GUEST_NFTABLES_POLICY).toContain("169.254.0.0/16");
+    expect(GUEST_NFTABLES_POLICY.indexOf("udp dport 53 accept"))
+      .toBeLessThan(GUEST_NFTABLES_POLICY.indexOf("192.168.0.0/16"));
+    expect(yaml.indexOf("udp dport 53 accept")).toBeLessThan(yaml.indexOf("192.168.0.0/16"));
+    expect(readFileSync(fileURLToPath(new URL("../scripts/lima/guest/refresh-egress", import.meta.url)), "utf8"))
+      .toContain("codexgw-lima-dns");
+    expect(readFileSync(fileURLToPath(new URL("../scripts/lima/guest/refresh-egress", import.meta.url)), "utf8"))
+      .toContain("BEGIN CODEXGW EGRESS");
+    expect(readFileSync(fileURLToPath(new URL("../scripts/lima/guest/refresh-egress", import.meta.url)), "utf8"))
+      .toContain("IPv4-only guest HTTPS");
+    expect(readFileSync(fileURLToPath(new URL("../scripts/lima/guest/prove-login-egress", import.meta.url)), "utf8"))
+      .toContain("auth.openai.com");
+    expect(readFileSync(fileURLToPath(new URL("../scripts/lima/install-guest-helpers.sh", import.meta.url)), "utf8"))
+      .toContain("prove-login-egress");
     for (const host of GUEST_EGRESS_HOSTS) {
       expect(readFileSync(fileURLToPath(new URL("../scripts/lima/guest/egress-hosts", import.meta.url)), "utf8"))
         .toContain(host);

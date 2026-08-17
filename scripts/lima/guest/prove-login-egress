@@ -1,0 +1,59 @@
+#!/bin/bash
+# Prove that the guest can complete TLS to the Codex token endpoint.
+# Run as root inside the guest before `codex login`. Does not print tokens.
+set -euo pipefail
+
+CA=/etc/ssl/certs/ca-certificates.crt
+HOST=auth.openai.com
+PORT=443
+tls_out="$(mktemp)"
+trap 'rm -f "$tls_out"' EXIT
+
+if [[ ! -s "$CA" ]]; then
+  echo "missing CA bundle $CA" >&2
+  echo "copy a CA bundle into the guest, then re-run refresh-egress" >&2
+  exit 1
+fi
+if [[ ! -x /usr/local/lib/codexgw/refresh-egress ]]; then
+  echo "refresh-egress is not installed" >&2
+  exit 1
+fi
+
+/usr/local/lib/codexgw/refresh-egress
+
+if ! getent ahosts "$HOST" | awk '{ print $1 }' | grep -Eq '^[0-9a-fA-F:.]+$'; then
+  echo "cannot resolve $HOST" >&2
+  exit 1
+fi
+
+echo "probing TLS $HOST:$PORT"
+set +e
+if command -v openssl >/dev/null 2>&1; then
+  timeout 15 openssl s_client -4 -verify_return_error -CAfile "$CA" \
+    -connect "${HOST}:${PORT}" -servername "$HOST" </dev/null >"$tls_out" 2>&1
+  status=$?
+elif command -v python3 >/dev/null 2>&1; then
+  timeout 15 python3 - "$HOST" "$PORT" "$CA" >"$tls_out" 2>&1 <<'PY'
+import socket, ssl, sys
+host, port, ca = sys.argv[1], int(sys.argv[2]), sys.argv[3]
+ctx = ssl.create_default_context(cafile=ca)
+with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+    sock.settimeout(15)
+    sock.connect((host, port))
+    with ctx.wrap_socket(sock, server_hostname=host) as ssock:
+        ssock.do_handshake()
+        print(ssock.version())
+PY
+  status=$?
+else
+  echo "openssl or python3 is required to prove token-endpoint TLS" >&2
+  exit 1
+fi
+set -e
+if [[ "$status" -ne 0 ]]; then
+  echo "TLS to $HOST:$PORT failed" >&2
+  grep -E 'connect error|verify error|errno=|Certificate|unable to|Timeout|timed out|Connection|ssl|SSL' \
+    "$tls_out" | head -n 20 >&2 || true
+  exit 1
+fi
+echo "login egress tls ok $HOST"

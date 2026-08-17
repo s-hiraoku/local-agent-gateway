@@ -3,7 +3,8 @@
 # Create once: limactl start --name=codexgw scripts/lima/codexgw.yaml
 # Then install helpers and authenticate:
 #   scripts/lima/install-guest-helpers.sh
-#   limactl shell codexgw -- sudo -u codexgw -H env CODEX_HOME=/var/lib/codexgw/home codex login
+#   limactl shell codexgw -- sudo -u codexgw -H env CODEX_HOME=/var/lib/codexgw/home \
+#     SSL_CERT_FILE=/etc/ssl/certs/ca-certificates.crt PATH=/usr/local/bin:/usr/bin:/bin codex login
 
 minimumLimaVersion: "1.0.0"
 vmType: vz
@@ -26,6 +27,14 @@ ssh:
   forwardX11Trusted: false
 mounts: []
 networks: []
+# Guest Codex login listens on localhost:1455. Forward only loopback so the
+# host browser callback can reach the VM without opening a LAN port.
+portForwards:
+- guestIP: "127.0.0.1"
+  guestPort: 1455
+  hostIP: "127.0.0.1"
+  hostPort: 1455
+  static: true
 images:
 - location: "https://cloud-images.ubuntu.com/releases/24.04/release/ubuntu-24.04-server-cloudimg-arm64.img"
   arch: "aarch64"
@@ -39,7 +48,7 @@ provision:
     export DEBIAN_FRONTEND=noninteractive
     if command -v apt-get >/dev/null 2>&1; then
       apt-get update -qq
-      apt-get install -y --no-install-recommends nftables bubblewrap
+      apt-get install -y --no-install-recommends nftables bubblewrap ca-certificates
     fi
     if ! id -u codexgw >/dev/null 2>&1; then
       useradd --system --home /var/lib/codexgw/home --shell /usr/sbin/nologin --create-home codexgw
@@ -48,6 +57,9 @@ provision:
       useradd --system --home /var/lib/codexgw/tool --shell /usr/sbin/nologin --create-home codexgw-tool
     fi
     mkdir -p /var/lib/codexgw/home /var/lib/codexgw/snapshots /var/lib/codexgw/tool /usr/local/lib/codexgw/bin /etc/codexgw
+    if ! grep -Fq "$(hostname)" /etc/hosts; then
+      printf '127.0.1.1 %s\n' "$(hostname)" >> /etc/hosts
+    fi
     chown -R codexgw:codexgw /var/lib/codexgw/home
     chmod 700 /var/lib/codexgw/home
     chown root:root /var/lib/codexgw/snapshots
@@ -90,12 +102,13 @@ provision:
         type filter hook output priority 0; policy drop;
         oif lo accept
         ct state established,related accept
-        ip daddr { 10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16, 169.254.0.0/16 } drop
-        ip6 daddr { fc00::/7, fe80::/10 } drop
         udp dport 53 accept
         tcp dport 53 accept
+        ip daddr { 10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16, 169.254.0.0/16 } drop
+        ip6 daddr { fc00::/7, fe80::/10 } drop
         tcp dport 443 ip daddr @codex4 accept
         tcp dport 443 ip6 daddr @codex6 accept
+        tcp dport 443 reject with tcp reset comment "codexgw-https-fastfail"
       }
     }
     NFT

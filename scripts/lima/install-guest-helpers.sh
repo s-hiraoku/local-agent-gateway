@@ -31,11 +31,26 @@ copy_guest_file() {
   guest chmod "$mode" "$dest"
 }
 
+echo "ensuring guest hostname resolves locally"
+"$LIMA" shell "$INSTANCE" -- sudo -n sh -c 'grep -Fq "$(hostname)" /etc/hosts || printf "127.0.1.1 %s\n" "$(hostname)" >> /etc/hosts'
+
 guest mkdir -p /usr/local/lib/codexgw/bin /etc/codexgw /var/lib/codexgw/home /var/lib/codexgw/snapshots
 copy_guest_file "$ROOT/guest/bwrap" /usr/local/lib/codexgw/bin/bwrap 0755
 copy_guest_file "$ROOT/guest/prove-tool-isolation" /usr/local/lib/codexgw/prove-tool-isolation 0755
 copy_guest_file "$ROOT/guest/refresh-egress" /usr/local/lib/codexgw/refresh-egress 0755
+copy_guest_file "$ROOT/guest/prove-login-egress" /usr/local/lib/codexgw/prove-login-egress 0755
 copy_guest_file "$ROOT/guest/egress-hosts" /etc/codexgw/egress-hosts 0644
+
+if ! guest test -s /etc/ssl/certs/ca-certificates.crt; then
+  if [[ -r /etc/ssl/cert.pem ]]; then
+    echo "guest CA bundle missing; copying host /etc/ssl/cert.pem"
+    copy_guest_file /etc/ssl/cert.pem /etc/ssl/certs/ca-certificates.crt 0644
+  else
+    echo "guest CA bundle /etc/ssl/certs/ca-certificates.crt is missing" >&2
+    echo "copy a CA bundle into the guest before login" >&2
+    exit 1
+  fi
+fi
 
 unit_dir="$(mktemp -d "${TMPDIR:-/tmp}/codexgw-units.XXXXXX")"
 trap 'rm -rf "$unit_dir"' EXIT
@@ -70,8 +85,8 @@ copy_guest_file "$unit_dir/codexgw-egress-refresh.timer" /etc/systemd/system/cod
 
 guest systemctl daemon-reload
 guest systemctl enable --now codexgw-egress-refresh.timer
-echo "refreshing egress allowlist"
-guest /usr/local/lib/codexgw/refresh-egress
+echo "proving login egress to auth.openai.com"
+guest /usr/local/lib/codexgw/prove-login-egress
 echo "running tool isolation probe"
 guest /usr/local/lib/codexgw/prove-tool-isolation
 echo "guest isolation helpers installed on $INSTANCE"
