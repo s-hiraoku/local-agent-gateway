@@ -11,8 +11,10 @@ plain: true
 cpus: 2
 memory: "4GiB"
 disk: "20GiB"
-rosetta:
-  enabled: false
+vmOpts:
+  vz:
+    rosetta:
+      enabled: false
 containerd:
   system: false
   user: false
