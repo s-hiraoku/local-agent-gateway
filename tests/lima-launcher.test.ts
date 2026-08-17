@@ -186,6 +186,8 @@ describe("Lima executor contract", () => {
     expect(yaml).not.toMatch(/^rosetta:/m);
     expect(yaml).toContain("mounts: []");
     expect(yaml).toContain("networks: []");
+    expect(yaml).toContain("guestPort: 1455");
+    expect(yaml).toContain('hostIP: "127.0.0.1"');
     expect(yaml).toContain(GUEST_SUPERVISOR);
     expect(yaml).toContain(GUEST_TOOL_USER);
     expect(yaml).toContain(GUEST_CODEX_HOME);

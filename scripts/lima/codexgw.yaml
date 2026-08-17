@@ -26,6 +26,14 @@ ssh:
   forwardX11Trusted: false
 mounts: []
 networks: []
+# Guest Codex login listens on localhost:1455. Forward only loopback so the
+# host browser callback can reach the VM without opening a LAN port.
+portForwards:
+- guestIP: "127.0.0.1"
+  guestPort: 1455
+  hostIP: "127.0.0.1"
+  hostPort: 1455
+  static: true
 images:
 - location: "https://cloud-images.ubuntu.com/releases/24.04/release/ubuntu-24.04-server-cloudimg-arm64.img"
   arch: "aarch64"

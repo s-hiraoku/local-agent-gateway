@@ -93,8 +93,14 @@ command -v limactl  # Apple Silicon: /opt/homebrew/bin/limactl
 
 limactl start --name=codexgw scripts/lima/codexgw.yaml
 scripts/lima/install-guest-helpers.sh
-# install a pinned Codex CLI on the guest PATH, then:
-limactl shell codexgw -- sudo -u codexgw -H env CODEX_HOME=/var/lib/codexgw/home codex login
+# install a pinned Linux Codex CLI on the guest PATH, then authenticate.
+# Keep `codex login` running in the guest and, in another host terminal:
+#   ssh -F ~/.lima/codexgw/ssh.config -N -L 1455:127.0.0.1:1455 lima-codexgw
+# Open the printed URL in the host browser. The callback is http://localhost:1455
+# and must be forwarded into the guest. Do not copy host auth files.
+limactl shell codexgw
+# inside the guest:
+# sudo -u codexgw -H env CODEX_HOME=/var/lib/codexgw/home PATH=/usr/local/bin:/usr/bin:/bin codex login
 ```
 
 If the named instance is missing, readiness fails closed with `CODEX_NOT_CONFIGURED`. A `Stopped` instance is started; the Gateway does not create a new VM. If the isolation probe fails, readiness also fails closed unless the operator explicitly acknowledges the residual.
