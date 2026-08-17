@@ -37,9 +37,19 @@ is_blocked_v4() {
 collect_addrs() {
   local host="$1"
   local round
-  for round in 1 2 3; do
-    timeout 8 getent ahostsv4 "$host" 2>/dev/null || true
-  done | awk '{ print $1 }' | sort -u
+  for round in 1 2; do
+    timeout 5 getent ahosts "$host" 2>/dev/null || true
+  done | awk '$1 ~ /^[0-9.]+$/ { print $1 }' | sort -u
+}
+
+ensure_lima_dns() {
+  if nft list chain inet filter output 2>/dev/null | grep -Fq "codexgw-lima-dns"; then
+    return
+  fi
+  # Lima's resolver is typically 192.168.5.2. Private-range drop must not
+  # precede DNS or getent returns no A records and token exchange fails.
+  nft insert rule inet filter output tcp dport 53 accept comment "codexgw-lima-dns-tcp"
+  nft insert rule inet filter output udp dport 53 accept comment "codexgw-lima-dns"
 }
 
 ensure_https_fastfail() {
@@ -86,6 +96,9 @@ v4=()
 pin="$(mktemp)"
 trap 'rm -f "$pin"' EXIT
 
+echo "nameserver $(awk '/^nameserver / { print $2; exit }' /etc/resolv.conf 2>/dev/null || echo unknown)" >&2
+ensure_lima_dns
+
 while IFS= read -r line || [[ -n "$line" ]]; do
   host="${line%%#*}"
   host="${host%"${host##*[![:space:]]}"}"
@@ -113,6 +126,11 @@ while IFS= read -r line || [[ -n "$line" ]]; do
   echo "resolved $host v4=$host_v4" >&2
 done < "$HOSTS_FILE"
 
+if [[ "${#v4[@]}" -eq 0 ]]; then
+  echo "resolved no IPv4 allowlist addresses; leaving nft sets unchanged" >&2
+  exit 1
+fi
+mapfile -t v4 < <(printf '%s\n' "${v4[@]}" | sort -u)
 if [[ -s "$pin" ]]; then
   sort -u "$pin" -o "$pin"
 fi
@@ -120,13 +138,7 @@ apply_hosts_pin "$pin"
 apply_ipv4_gai
 ensure_https_fastfail
 
-if [[ "${#v4[@]}" -gt 0 ]]; then
-  mapfile -t v4 < <(printf '%s\n' "${v4[@]}" | sort -u)
-fi
-
 nft flush set inet filter codex4
 nft flush set inet filter codex6
-if [[ "${#v4[@]}" -gt 0 ]]; then
-  nft add element inet filter codex4 "{ $(printf '%s, ' "${v4[@]}" | sed 's/, $//') }"
-fi
+nft add element inet filter codex4 "{ $(printf '%s, ' "${v4[@]}" | sed 's/, $//') }"
 echo "nft allowlist v4=${#v4[@]} v6=0"

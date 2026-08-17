@@ -141,7 +141,7 @@ Rollback by setting the executor back to `host`, restarting the existing LaunchA
 ## Remaining residuals
 
 - Prove that a real Codex tool subprocess, not only the synthetic probe, cannot read `CODEX_HOME` while App Server authentication still works.
-- IP-set hostname pinning cannot distinguish SNI on shared CDN addresses; UDP/TCP 53 remains open for resolution. `refresh-egress` pins resolved IPv4 allowlist addresses in `/etc/hosts`. Guest HTTPS is IPv4-only so Lima vz IPv6 black-holes cannot stall token exchange; unmatched TCP 443 is reset.
+- IP-set hostname pinning cannot distinguish SNI on shared CDN addresses. Guest DNS (UDP/TCP 53) is allowed before the RFC1918 drop so Lima's host resolver, typically `192.168.5.2`, can answer. Other private TCP remains denied. `refresh-egress` pins resolved IPv4 allowlist addresses in `/etc/hosts`. Guest HTTPS is IPv4-only so Lima vz IPv6 black-holes cannot stall token exchange; unmatched TCP 443 is reset.
 - A tool that bypasses Codex `bwrap` and execs `/usr/bin/bwrap` or runs unsandboxed as `codexgw` can still read `CODEX_HOME`.
 - Wire Lima into the versioned LaunchAgent only after live acceptance evidence exists.
 - Record the live acceptance-suite evidence in `codex/ledger/verification.md`.

@@ -102,10 +102,10 @@ provision:
         type filter hook output priority 0; policy drop;
         oif lo accept
         ct state established,related accept
-        ip daddr { 10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16, 169.254.0.0/16 } drop
-        ip6 daddr { fc00::/7, fe80::/10 } drop
         udp dport 53 accept
         tcp dport 53 accept
+        ip daddr { 10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16, 169.254.0.0/16 } drop
+        ip6 daddr { fc00::/7, fe80::/10 } drop
         tcp dport 443 ip daddr @codex4 accept
         tcp dport 443 ip6 daddr @codex6 accept
         tcp dport 443 reject with tcp reset comment "codexgw-https-fastfail"

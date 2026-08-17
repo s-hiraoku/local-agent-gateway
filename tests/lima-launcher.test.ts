@@ -200,7 +200,11 @@ describe("Lima executor contract", () => {
     expect(GUEST_NFTABLES_POLICY).toContain("tcp dport 443 ip daddr @codex4 accept");
     expect(GUEST_NFTABLES_POLICY).toContain("reject with tcp reset");
     expect(GUEST_NFTABLES_POLICY).not.toMatch(/tcp dport 443 accept$/m);
-    expect(GUEST_NFTABLES_POLICY).toContain("169.254.0.0/16");
+    expect(GUEST_NFTABLES_POLICY.indexOf("udp dport 53 accept"))
+      .toBeLessThan(GUEST_NFTABLES_POLICY.indexOf("192.168.0.0/16"));
+    expect(yaml.indexOf("udp dport 53 accept")).toBeLessThan(yaml.indexOf("192.168.0.0/16"));
+    expect(readFileSync(fileURLToPath(new URL("../scripts/lima/guest/refresh-egress", import.meta.url)), "utf8"))
+      .toContain("codexgw-lima-dns");
     expect(readFileSync(fileURLToPath(new URL("../scripts/lima/guest/refresh-egress", import.meta.url)), "utf8"))
       .toContain("BEGIN CODEXGW EGRESS");
     expect(readFileSync(fileURLToPath(new URL("../scripts/lima/guest/refresh-egress", import.meta.url)), "utf8"))
