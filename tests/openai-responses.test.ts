@@ -113,6 +113,30 @@ describe("OpenAI Responses compatibility", () => {
     });
   });
 
+  it("exposes grok-subscription when Grok is the inference provider", async () => {
+    const { app } = await testApp(successfulRunner, true, { inferenceProvider: "grok" });
+    const listed = await app.inject({ method: "GET", url: "/v1/models", headers: authorization });
+    expect(listed.statusCode).toBe(200);
+    expect(listed.json().data[0].id).toBe("grok-subscription");
+
+    const created = await app.inject({
+      method: "POST",
+      url: "/v1/responses",
+      headers: authorization,
+      payload: { model: "grok-subscription", input: "hello" }
+    });
+    expect(created.statusCode).toBe(200);
+    expect(created.json().model).toBe("grok-subscription");
+
+    const rejected = await app.inject({
+      method: "POST",
+      url: "/v1/responses",
+      headers: authorization,
+      payload: { model: "codex-subscription", input: "hello" }
+    });
+    expect(rejected.statusCode).toBe(400);
+  });
+
   it("returns a stable, opaque Responses object through the encrypted inference pipeline", async () => {
     let receivedPrompt = "";
     const runner: CodingRunner = {

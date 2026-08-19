@@ -137,9 +137,11 @@ describe("local production installer", () => {
     const launcher = readFileSync(new URL("../scripts/local-production/launcher.sh", import.meta.url), "utf8");
     expect(launcher).toContain('INFERENCE_PROVIDER="codex"');
     expect(launcher).toContain('export CODEXGW_INFERENCE_PROVIDER="${INFERENCE_PROVIDER}"');
-    expect(launcher).toContain("inference provider configuration must be codex or claude");
+    expect(launcher).toContain("inference provider configuration must be codex, claude, or grok");
     expect(launcher).toContain("the claude inference provider requires a configured Claude executable");
+    expect(launcher).toContain("the grok inference provider requires a configured Grok executable");
     expect(launcher).toContain('[[ -x "${CLAUDE_COMMAND}" ]]');
+    expect(launcher).toContain('[[ -x "${GROK_COMMAND}" ]]');
   });
 
   it("waits for port 8787 to become available and rejects a persistent listener", async () => {

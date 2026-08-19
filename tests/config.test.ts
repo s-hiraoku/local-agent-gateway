@@ -85,16 +85,20 @@ describe("loadConfig", () => {
     }).limaAllowUnprovenToolIsolation).toBe(true);
   });
 
-  it("defaults the inference provider to codex and accepts claude", () => {
+  it("defaults the inference provider to codex and accepts claude or grok", () => {
     expect(loadConfig(validEnv()).inferenceProvider).toBe("codex");
     expect(loadConfig({
       ...validEnv(),
       CODEXGW_INFERENCE_PROVIDER: "claude"
     }).inferenceProvider).toBe("claude");
+    expect(loadConfig({
+      ...validEnv(),
+      CODEXGW_INFERENCE_PROVIDER: "grok"
+    }).inferenceProvider).toBe("grok");
     expect(() => loadConfig({
       ...validEnv(),
       CODEXGW_INFERENCE_PROVIDER: "gpt"
-    })).toThrow(/'codex' or 'claude'/);
+    })).toThrow(/'codex', 'claude', or 'grok'/);
   });
 
   it("defaults the Claude command and leaves the model unset", () => {
@@ -108,6 +112,19 @@ describe("loadConfig", () => {
     });
     expect(overridden.claudeCommand).toBe("/usr/local/bin/claude");
     expect(overridden.claudeModel).toBe("claude-opus-5");
+  });
+
+  it("defaults the Grok command and leaves the model unset", () => {
+    const config = loadConfig(validEnv());
+    expect(config.grokCommand).toBe("grok");
+    expect(config.grokModel).toBeUndefined();
+    const overridden = loadConfig({
+      ...validEnv(),
+      CODEXGW_GROK_COMMAND: "/usr/local/bin/grok",
+      CODEXGW_GROK_MODEL: "grok-4.5"
+    });
+    expect(overridden.grokCommand).toBe("/usr/local/bin/grok");
+    expect(overridden.grokModel).toBe("grok-4.5");
   });
 
   it("still requires CODEXGW_REPOSITORIES_JSON to be present and an array", () => {

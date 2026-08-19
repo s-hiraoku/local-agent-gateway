@@ -2,7 +2,7 @@
 
 Status: **implemented for explicit trusted-local opt-in**
 
-This document defines the first compatibility interface for using the operator's local ChatGPT/Codex subscription from OpenAI Responses API clients. It is a narrow adapter over the existing inference job pipeline, not a general OpenAI API proxy and not a replacement for the metered OpenAI Platform API.
+This document defines the first compatibility interface for using the operator's local inference subscription from OpenAI Responses API clients. It is a narrow adapter over the existing inference job pipeline, not a general OpenAI API proxy and not a replacement for the metered OpenAI Platform API. The configured inference provider (`codex`, `claude`, or `grok`) supplies the turn; the public contract stays Responses-shaped.
 
 Normative terms such as **MUST**, **MUST NOT**, and **SHOULD** describe the contract. The routes are registered only when the compatibility option is enabled.
 
@@ -11,7 +11,7 @@ Normative terms such as **MUST**, **MUST NOT**, and **SHOULD** describe the cont
 The first version supports:
 
 - one local operator and the existing Gateway bearer token;
-- a server-selected Codex model exposed through one stable model alias;
+- a server-selected upstream model exposed through one stable Gateway alias;
 - stateless text input and text output;
 - synchronous Responses requests;
 - Responses-compatible Server-Sent Events;
@@ -33,7 +33,7 @@ Unknown request properties MUST be rejected. The Gateway MUST NOT silently accep
 
 ## Authentication boundary
 
-OAuth authentication belongs to Codex, not to the public Gateway API:
+OAuth authentication belongs to the configured inference backend, not to the public Gateway API. The default Codex path:
 
 ```text
 OpenAI-compatible client
@@ -42,24 +42,20 @@ OpenAI-compatible client
         v
 Local Agent Gateway
         |
-        | private Codex App Server stdio
+        | private Codex App Server stdio  (or Claude/Grok CLI headless)
         v
-Dedicated CODEX_HOME
-        |
-        | operator-created ChatGPT OAuth session
+Dedicated local login (CODEX_HOME, Claude, or ~/.grok)
         v
-ChatGPT/Codex subscription
+Operator subscription
 ```
 
-The operator authenticates the dedicated home before enabling the compatibility interface:
+When `CODEXGW_INFERENCE_PROVIDER=grok`, authenticate the Grok CLI before enabling the interface:
 
 ```bash
-mkdir -p "$HOME/.codex-gateway"
-chmod 700 "$HOME/.codex-gateway"
-CODEX_HOME="$HOME/.codex-gateway" codex login
+grok login
 ```
 
-The Gateway MUST continue to verify that the dedicated home contains a ChatGPT account login. API-key-backed Codex sessions MUST be rejected. OAuth access tokens, refresh tokens, ID tokens, and account identifiers MUST NOT appear in public requests, responses, logs, or audit events.
+The Gateway MUST NOT accept an `XAI_API_KEY` on public requests. For the Codex path, the dedicated home MUST continue to contain a ChatGPT account login, and API-key-backed Codex sessions MUST be rejected. OAuth access tokens, refresh tokens, ID tokens, and account identifiers MUST NOT appear in public requests, responses, logs, or audit events.
 
 Every `/v1` request requires the existing Gateway credential:
 
@@ -95,13 +91,14 @@ never used as the public API credential.
 
 ## Model contract
 
-The public model ID is always:
+The public model ID is one stable Gateway alias, selected by `CODEXGW_INFERENCE_PROVIDER`:
 
 ```text
-codex-subscription
+codex-subscription   # codex or claude
+grok-subscription    # grok
 ```
 
-This alias maps to `CODEXGW_CODEX_MODEL` when configured, otherwise to the default selected by Codex for the authenticated account. A request cannot override the server-selected upstream model.
+For Codex this alias maps to `CODEXGW_CODEX_MODEL` when configured, otherwise to the default selected by Codex for the authenticated account. For Grok it maps to `CODEXGW_GROK_MODEL` when configured, otherwise to the Grok CLI default. A request cannot override the server-selected upstream model.
 
 The Gateway MUST NOT enumerate upstream account entitlements or expose private upstream model metadata.
 
@@ -154,7 +151,7 @@ If `Idempotency-Key` is omitted, the Gateway creates an internal unique key and 
 
 | Property | Required | Type | Contract |
 | --- | --- | --- | --- |
-| `model` | yes | string | Must equal `codex-subscription`. |
+| `model` | yes | string | Must equal the active Gateway alias (`codex-subscription` or `grok-subscription`). |
 | `input` | yes | string | Non-empty plain-text user input. |
 | `instructions` | no | string | Non-empty plain-text instructions placed in a separately delimited Gateway prompt section. This approximates, but does not claim full parity with, an upstream developer message. |
 | `stream` | no | boolean | Defaults to `false`; when true, returns Responses SSE events. |
@@ -281,7 +278,7 @@ Clients MUST branch primarily on HTTP status and `error.code`; message text is n
 | `401` | `authentication_error` | `AUTH_REQUIRED` |
 | `404` | `invalid_request_error` | `NOT_FOUND` |
 | `409` | `invalid_request_error` | `IDEMPOTENCY_CONFLICT`, cancellation conflict |
-| `429` | `rate_limit_error` | `QUEUE_FULL`, `CODEX_RATE_LIMITED`, `CLAUDE_RATE_LIMITED` |
+| `429` | `rate_limit_error` | `QUEUE_FULL`, `CODEX_RATE_LIMITED`, `CLAUDE_RATE_LIMITED`, `GROK_RATE_LIMITED` |
 | `502` | `api_error` | `CODEX_EXECUTION_FAILED`, `CODEX_OVERLOADED` |
 | `503` | `api_error` | `CODEX_UNAUTHORIZED`, `CODEX_UNSUPPORTED_VERSION`, dependency not ready |
 | `504` | `api_error` | Codex or compatibility wait timeout |

@@ -1,11 +1,23 @@
 import { GatewayError } from "../../domain/errors.js";
 import type { PublicJob } from "../../domain/jobs.js";
 import { SecretBox } from "../../infrastructure/crypto.js";
+import type { GatewayConfig } from "../../infrastructure/config.js";
 
 export const OPENAI_COMPATIBILITY_MODEL = "codex-subscription";
+export const GROK_COMPATIBILITY_MODEL = "grok-subscription";
+
+export type OpenAICompatibilityModel =
+  | typeof OPENAI_COMPATIBILITY_MODEL
+  | typeof GROK_COMPATIBILITY_MODEL;
+
+export function openaiCompatibilityModel(
+  provider: GatewayConfig["inferenceProvider"]
+): OpenAICompatibilityModel {
+  return provider === "grok" ? GROK_COMPATIBILITY_MODEL : OPENAI_COMPATIBILITY_MODEL;
+}
 
 export type OpenAIResponseRequest = {
-  model: typeof OPENAI_COMPATIBILITY_MODEL;
+  model: OpenAICompatibilityModel;
   input: string;
   instructions?: string;
   stream?: boolean;
@@ -54,13 +66,13 @@ export function responseObject(
     error: failed
       ? {
           code: job.error?.code ?? "CODEX_EXECUTION_FAILED",
-          message: job.error?.message ?? "The Codex-backed response failed"
+          message: job.error?.message ?? "The subscription-backed response failed"
         }
       : null,
     incomplete_details: null,
     instructions: request.instructions ?? null,
     max_output_tokens: null,
-    model: OPENAI_COMPATIBILITY_MODEL,
+    model: request.model,
     output: completed
       ? [{
           id: messageId,

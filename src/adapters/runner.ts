@@ -1,8 +1,9 @@
 import type { OutputSchema } from "../domain/structured-output.js";
 
 // Provider-neutral contract for a backend that runs one read-only turn.
-// Codex (App Server over stdio) and Claude (Code CLI headless) both implement
-// it; the job processor picks an implementation by job kind / config.
+// Codex (App Server over stdio), Claude (Code CLI headless), and Grok (Build
+// CLI headless) all implement it; the job processor picks an implementation
+// by job kind / config.
 
 export type CodingEvent = { type: "agent.message.delta"; data: { delta: string } };
 

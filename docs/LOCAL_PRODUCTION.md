@@ -47,19 +47,21 @@ To enable the loopback-only OpenAI Responses compatibility subset for trusted lo
 pnpm local:install -- --openai-compatibility true
 ```
 
-To run inference turns on Claude Code instead of Codex, add:
+To run inference turns on Claude Code or Grok Build instead of Codex, add:
 
 ```bash
 pnpm local:install -- --inference-provider claude
+# or
+pnpm local:install -- --inference-provider grok
 ```
 
-The installer resolves the `claude` executable with `which` and pins its
+The installer resolves the `claude` or `grok` executable with `which` and pins its
 absolute path into the release configuration, so the LaunchAgent does not
-depend on its own `PATH`. Pass `--claude-command` to select a specific binary
-or `--claude-model` to pin a model. Coding turns are unaffected and continue to
-run on Codex. Authenticate the Claude CLI as the same user that runs the
-LaunchAgent before installing, and pass `--inference-provider codex` on a later
-installation to switch back.
+depend on its own `PATH`. Pass `--claude-command` / `--grok-command` to select a
+specific binary or `--claude-model` / `--grok-model` to pin a model. Coding
+turns are unaffected and continue to run on Codex. Authenticate the selected
+CLI as the same user that runs the LaunchAgent before installing, and pass
+`--inference-provider codex` on a later installation to switch back.
 
 This command is also the upgrade path for an existing installation after the
 implementation has been merged. Run it from a clean checkout of the intended
@@ -90,7 +92,7 @@ Runtime files live under:
   current -> releases/<timestamp>-<commit>
   releases/<timestamp>-<commit>/
     bin/{launcher.sh,gatewayctl}
-    config/{repositories.json,codex-command,codex-home,openai-compatibility,inference-provider[,claude-command,claude-model]}
+    config/{repositories.json,codex-command,codex-home,openai-compatibility,inference-provider[,claude-command,claude-model,grok-command,grok-model]}
     dist/
     runtime/
   data/gateway-v2.sqlite
@@ -184,8 +186,9 @@ contract tests and a live App Server probe succeed. With
 compatibility enabled, the unauthenticated `/v1/models` check must return
 `401`; `404` means the installed release has compatibility disabled. A trusted
 client configured with the Gateway bearer token must receive `200` and the
-`codex-subscription` model. Do not use or expose the Codex OAuth token for this
-check.
+active compatibility model (`codex-subscription`, or `grok-subscription` when
+the installed inference provider is Grok). Do not use or expose upstream OAuth
+tokens for this check.
 
 If startup fails, inspect `gateway.error.log`. Keychain retrieval failure,
 missing Codex, an unsafe Codex home, or invalid repository configuration causes

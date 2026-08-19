@@ -11,7 +11,7 @@ import { GatewayStore } from "../../application/store.js";
 import { JobProcessor } from "../../application/job-processor.js";
 import {
   compatibilityIds,
-  OPENAI_COMPATIBILITY_MODEL,
+  openaiCompatibilityModel,
   responseObject,
   toInferencePrompt,
   type OpenAIResponseRequest
@@ -29,6 +29,7 @@ export async function registerOpenAIResponsesRoutes(
 ): Promise<void> {
   const { config, store, processor } = dependencies;
   const secrets = new SecretBox(config.encryptionKey);
+  const model = openaiCompatibilityModel(config.inferenceProvider);
 
   app.get("/v1/models", {
     schema: {
@@ -37,7 +38,7 @@ export async function registerOpenAIResponsesRoutes(
         200: Type.Object({
           object: Type.Literal("list"),
           data: Type.Array(Type.Object({
-            id: Type.Literal(OPENAI_COMPATIBILITY_MODEL),
+            id: Type.Literal(model),
             object: Type.Literal("model"),
             created: Type.Literal(0),
             owned_by: Type.Literal("local-agent-gateway")
@@ -48,7 +49,7 @@ export async function registerOpenAIResponsesRoutes(
   }, async () => ({
     object: "list" as const,
     data: [{
-      id: OPENAI_COMPATIBILITY_MODEL,
+      id: model,
       object: "model" as const,
       created: 0 as const,
       owned_by: "local-agent-gateway" as const
@@ -66,9 +67,9 @@ export async function registerOpenAIResponsesRoutes(
       }
     },
     schema: {
-      summary: "Create a text response through the local Codex subscription",
+      summary: "Create a text response through the local subscription",
       body: Type.Object({
-        model: Type.Literal(OPENAI_COMPATIBILITY_MODEL),
+        model: Type.Literal(model),
         input: Type.String({ minLength: 1 }),
         instructions: Type.Optional(Type.String({ minLength: 1 })),
         stream: Type.Optional(Type.Boolean())
@@ -387,6 +388,8 @@ function jobError(job: PublicJob): GatewayError {
       return new GatewayError("CODEX_RATE_LIMITED", message, 429, retryable);
     case "CLAUDE_RATE_LIMITED":
       return new GatewayError("CLAUDE_RATE_LIMITED", message, 429, retryable);
+    case "GROK_RATE_LIMITED":
+      return new GatewayError("GROK_RATE_LIMITED", message, 429, retryable);
     case "CODEX_UNAUTHORIZED":
       return new GatewayError("CODEX_UNAUTHORIZED", message, 503, retryable);
     case "CODEX_UNSUPPORTED_VERSION":
@@ -395,6 +398,10 @@ function jobError(job: PublicJob): GatewayError {
       return new GatewayError("CODEX_OVERLOADED", message, 503, retryable);
     case "CODEX_TIMEOUT":
       return new GatewayError("CODEX_TIMEOUT", message, 504, retryable);
+    case "GROK_UNAUTHORIZED":
+      return new GatewayError("GROK_UNAUTHORIZED", message, 503, retryable);
+    case "GROK_TIMEOUT":
+      return new GatewayError("GROK_TIMEOUT", message, 504, retryable);
     default:
       return new GatewayError("CODEX_EXECUTION_FAILED", message, 502, retryable);
   }

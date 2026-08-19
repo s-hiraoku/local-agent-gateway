@@ -38,8 +38,8 @@ INFERENCE_PROVIDER="codex"
 if [[ -f "${CONFIG}/inference-provider" ]]; then
   INFERENCE_PROVIDER="$(/bin/cat "${CONFIG}/inference-provider")"
 fi
-[[ "${INFERENCE_PROVIDER}" == "codex" || "${INFERENCE_PROVIDER}" == "claude" ]] \
-  || fail "inference provider configuration must be codex or claude"
+[[ "${INFERENCE_PROVIDER}" == "codex" || "${INFERENCE_PROVIDER}" == "claude" || "${INFERENCE_PROVIDER}" == "grok" ]] \
+  || fail "inference provider configuration must be codex, claude, or grok"
 
 CLAUDE_COMMAND=""
 if [[ -f "${CONFIG}/claude-command" ]]; then
@@ -48,6 +48,15 @@ fi
 if [[ "${INFERENCE_PROVIDER}" == "claude" ]]; then
   [[ -n "${CLAUDE_COMMAND}" ]] || fail "the claude inference provider requires a configured Claude executable"
   [[ -x "${CLAUDE_COMMAND}" ]] || fail "configured Claude executable is unavailable"
+fi
+
+GROK_COMMAND=""
+if [[ -f "${CONFIG}/grok-command" ]]; then
+  GROK_COMMAND="$(/bin/cat "${CONFIG}/grok-command")"
+fi
+if [[ "${INFERENCE_PROVIDER}" == "grok" ]]; then
+  [[ -n "${GROK_COMMAND}" ]] || fail "the grok inference provider requires a configured Grok executable"
+  [[ -x "${GROK_COMMAND}" ]] || fail "configured Grok executable is unavailable"
 fi
 
 API_TOKEN="$(/usr/bin/security find-generic-password -a "${ACCOUNT}" -s "${LABEL}.api-token" -w)" \
@@ -71,8 +80,18 @@ fi
 if [[ -f "${CONFIG}/claude-model" ]]; then
   export CODEXGW_CLAUDE_MODEL="$(/bin/cat "${CONFIG}/claude-model")"
 fi
+if [[ -n "${GROK_COMMAND}" ]]; then
+  export CODEXGW_GROK_COMMAND="${GROK_COMMAND}"
+fi
+if [[ -f "${CONFIG}/grok-model" ]]; then
+  export CODEXGW_GROK_MODEL="$(/bin/cat "${CONFIG}/grok-model")"
+fi
 export LOG_LEVEL="info"
-export PATH="$(/usr/bin/dirname "${CODEX_COMMAND}"):${RELEASE}/runtime:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin"
+if [[ -n "${GROK_COMMAND}" ]]; then
+  export PATH="$(/usr/bin/dirname "${GROK_COMMAND}"):$(/usr/bin/dirname "${CODEX_COMMAND}"):${RELEASE}/runtime:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin"
+else
+  export PATH="$(/usr/bin/dirname "${CODEX_COMMAND}"):${RELEASE}/runtime:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin"
+fi
 
 unset API_TOKEN ENCRYPTION_KEY
 cd "${RELEASE}"

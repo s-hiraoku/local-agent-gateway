@@ -21,6 +21,7 @@ const config: GatewayConfig = {
   openaiCompatibilityEnabled: false,
   inferenceProvider: "codex",
   claudeCommand: "claude",
+  grokCommand: "grok",
   codexExecutor: "host",
   limaCommand: "limactl",
   limaInstance: "codexgw",
