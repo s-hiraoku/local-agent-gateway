@@ -65,10 +65,7 @@ export class GrokHeadlessRunner implements CodingRunner {
         );
       }
 
-      const structured = envelope.structured_output;
-      const result = structured !== undefined && structured !== null
-        ? JSON.stringify(structured)
-        : typeof envelope.result === "string" ? envelope.result : "";
+      const result = grokResultText(envelope);
       if (!result) {
         throw new GatewayError("GROK_EXECUTION_FAILED", "Grok returned an empty result", 502, true);
       }
@@ -173,6 +170,16 @@ function parseGrokEnvelope(stdout: string): Record<string, unknown> {
     }
     throw new GatewayError("GROK_EXECUTION_FAILED", "Grok did not return a JSON envelope", 502, true);
   }
+}
+
+function grokResultText(envelope: Record<string, unknown>): string {
+  const structured = envelope.structured_output;
+  if (structured !== undefined && structured !== null) {
+    return JSON.stringify(structured);
+  }
+  if (typeof envelope.text === "string" && envelope.text) return envelope.text;
+  if (typeof envelope.result === "string" && envelope.result) return envelope.result;
+  return "";
 }
 
 function grokErrorText(envelope: Record<string, unknown>): string {
