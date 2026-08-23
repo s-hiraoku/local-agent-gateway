@@ -52,6 +52,16 @@ describe("GrokHeadlessRunner", () => {
     expect(result.backendThreadId).toBe("sess-1");
   });
 
+  it("returns the live Grok json envelope text field", async () => {
+    const { command } = fakeGrok(
+      `echo '{"text":"ok","stopReason":"end_turn","sessionId":"sess-live","thought":"ignore"}'`
+    );
+    const { outputSchema: _omitted, ...withoutSchema } = baseInput;
+    const result = await runnerFor(command).run({ ...withoutSchema, repositoryPath: workspace() });
+    expect(result.result).toBe("ok");
+    expect(result.backendThreadId).toBe("sess-live");
+  });
+
   it("writes the prompt to a file and disables tools", async () => {
     const capture = mkdtempSync(join(tmpdir(), "codexgw-grok-argv-"));
     directories.push(capture);

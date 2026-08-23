@@ -402,6 +402,8 @@ function jobError(job: PublicJob): GatewayError {
       return new GatewayError("GROK_UNAUTHORIZED", message, 503, retryable);
     case "GROK_TIMEOUT":
       return new GatewayError("GROK_TIMEOUT", message, 504, retryable);
+    case "GROK_EXECUTION_FAILED":
+      return new GatewayError("GROK_EXECUTION_FAILED", message, 502, retryable);
     default:
       return new GatewayError("CODEX_EXECUTION_FAILED", message, 502, retryable);
   }
