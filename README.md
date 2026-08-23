@@ -1,6 +1,6 @@
 # local-agent-gateway
 
-Local Agent Gateway is a private, single-owner API for using local AI capabilities from trusted external applications. Version 2 is a clean rewrite: coding runs through Codex App Server over private stdio; future image and audio capabilities will use the OpenAI Platform API behind separate adapters.
+Local Agent Gateway is a private, single-owner API for using local AI capabilities from trusted external applications. Version 2 is a clean rewrite: coding runs through Codex App Server over private stdio; inference can use Codex, Claude Code, or Grok Build; future image and audio capabilities will use the OpenAI Platform API behind separate adapters.
 
 The public API never exposes a raw working directory, Codex thread ID, App Server JSON-RPC method, upstream credential, arbitrary shell endpoint, or `danger-full-access` mode.
 
@@ -8,8 +8,9 @@ The public API never exposes a raw working directory, Codex thread ID, App Serve
 
 Implemented:
 
-- authenticated, read-only coding conversations;
+- authenticated, read-only coding conversations on Codex;
 - atomic one-shot coding runs for stateless clients such as Decision-Agent;
+- repository-free inference turns on Codex, Claude Code, or Grok Build;
 - JSON Schema-constrained output with strict local result validation;
 - durable SQLite jobs and attempt history;
 - encrypted prompt, result, and event payloads;
@@ -26,6 +27,8 @@ Implemented:
 Not implemented yet:
 
 - write-capable worktrees and patch artifacts;
+- Cursor IDE / `@cursor/sdk` as a backend or custom OpenAI provider;
+- `/v1/chat/completions` and other CLIProxyAPI-style inbound dialects;
 - image, audio, realtime, or general OpenAI Platform Responses API adapters;
 - multi-user identity or token administration;
 - Codex account login endpoints and usage reporting;
@@ -34,12 +37,27 @@ Not implemented yet:
 
 V2 is a production-shaped foundation, not production-ready for untrusted users or untrusted repositories. See [Architecture](docs/ARCHITECTURE.md) and [Threat model](docs/THREAT_MODEL.md).
 
+## Backends
+
+Clients authenticate only to the Gateway. They never name a working directory, CLI, or upstream token. The Gateway selects a runner by job kind.
+
+| Job | Backend | Credential | Scope |
+| --- | --- | --- | --- |
+| `coding.turn` | Codex App Server only | dedicated ChatGPT/Codex login in `CODEX_HOME` | Read-only review of a registered repository: conversations, `/v2/coding/runs`, structured output, SSE |
+| `inference.turn` | `CODEXGW_INFERENCE_PROVIDER`: `codex` (default), `claude`, or `grok` | matching local CLI login | Text-in / JSON-out against a private empty directory. No `repositoryId` |
+
+`GET /readyz` always probes Codex (supported CLI version and ChatGPT login), and also probes the selected inference CLI when it is not Codex. Authentication of Claude or Grok is not probed on every poll, because that would consume subscription usage; an unauthenticated CLI fails on the first real turn.
+
+Cursor (the IDE or `@cursor/sdk`) is not a backend. Lima isolation is Codex coding only and remains opt-in.
+
 ## Requirements
 
 - Node.js 26 (`.node-version` pins the preferred patch)
 - pnpm 11.13
-- a current Codex CLI with App Server support, pinned inside the range in `src/adapters/codex/compatibility.ts` (currently 0.128.0–0.149.99)
+- a current Codex CLI with App Server support, pinned inside the range in `src/adapters/codex/compatibility.ts` (currently 0.128.0–0.149.99). Required even when inference uses Claude or Grok, because `/readyz` and coding turns always use Codex
 - a dedicated `CODEX_HOME` authenticated with the intended ChatGPT/Codex account
+- optional: Claude Code (`claude auth login`) when `CODEXGW_INFERENCE_PROVIDER=claude`
+- optional: Grok Build (`grok login`) when `CODEXGW_INFERENCE_PROVIDER=grok`. Uses `~/.grok/auth.json`, not `XAI_API_KEY`
 
 The dedicated home must not contain `config.toml`; Gateway startup rejects it to prevent accidental MCP or personal configuration inheritance.
 
@@ -213,12 +231,12 @@ const client = new OpenAI({
 });
 
 const response = await client.responses.create({
-  model: "codex-subscription",
+  model: "codex-subscription", // or "grok-subscription" when inference is grok
   input: "Summarize this text: ..."
 });
 ```
 
-This is a strict text-only compatibility subset backed by the configured inference subscription (`codex-subscription` or, when `CODEXGW_INFERENCE_PROVIDER=grok`, `grok-subscription`), not an OpenAI Platform API replacement. Unsupported fields are rejected. See [OpenAI Responses compatibility](docs/OPENAI_RESPONSES_COMPATIBILITY.md).
+This is a strict text-only Responses subset, not `/v1/chat/completions` and not an OpenAI Platform API replacement. The public model alias is `codex-subscription` for Codex or Claude inference, and `grok-subscription` when `CODEXGW_INFERENCE_PROVIDER=grok`. Unsupported fields are rejected. See [OpenAI Responses compatibility](docs/OPENAI_RESPONSES_COMPATIBILITY.md).
 
 Create a conversation:
 
