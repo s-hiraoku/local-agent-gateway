@@ -62,6 +62,20 @@ describe("GrokHeadlessRunner", () => {
     expect(result.backendThreadId).toBe("sess-live");
   });
 
+  it("JSON-stringifies a string structured_output so a string schema can parse it", async () => {
+    const { command } = fakeGrok(
+      `echo '{"type":"result","subtype":"success","is_error":false,"session_id":"sess-str","structured_output":"ok"}'`
+    );
+    const result = await runnerFor(command).run({
+      ...baseInput,
+      outputSchema: { type: "string" },
+      repositoryPath: workspace()
+    });
+    expect(result.result).toBe('"ok"');
+    expect(JSON.parse(result.result)).toBe("ok");
+    expect(result.backendThreadId).toBe("sess-str");
+  });
+
   it("writes the prompt to a file and disables tools", async () => {
     const capture = mkdtempSync(join(tmpdir(), "codexgw-grok-argv-"));
     directories.push(capture);

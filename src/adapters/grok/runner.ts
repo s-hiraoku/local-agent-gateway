@@ -175,7 +175,7 @@ function parseGrokEnvelope(stdout: string): Record<string, unknown> {
 function grokResultText(envelope: Record<string, unknown>): string {
   const structured = envelope.structured_output;
   if (structured !== undefined && structured !== null) {
-    return typeof structured === "string" ? structured : JSON.stringify(structured);
+    return JSON.stringify(structured);
   }
   if (typeof envelope.text === "string" && envelope.text) return envelope.text;
   if (typeof envelope.result === "string" && envelope.result) return envelope.result;
