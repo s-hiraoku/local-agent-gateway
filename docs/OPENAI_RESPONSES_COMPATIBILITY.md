@@ -2,7 +2,7 @@
 
 Status: **implemented for explicit trusted-local opt-in**
 
-This document defines the first compatibility interface for using the operator's local inference subscription from OpenAI Responses API clients. It is a narrow adapter over the existing inference job pipeline, not a general OpenAI API proxy and not a replacement for the metered OpenAI Platform API. The configured inference provider (`codex`, `claude`, or `grok`) supplies the turn; the public contract stays Responses-shaped.
+This document defines the first compatibility interface for using the operator's local inference subscription from OpenAI Responses API clients. It is a narrow adapter over the existing inference job pipeline, not a general OpenAI API proxy and not a replacement for the metered OpenAI Platform API. The configured inference provider (`codex`, `claude`, `grok`, or `cursor`) supplies the turn; the public contract stays Responses-shaped.
 
 Normative terms such as **MUST**, **MUST NOT**, and **SHOULD** describe the contract. The routes are registered only when the compatibility option is enabled.
 
@@ -42,9 +42,9 @@ OpenAI-compatible client
         v
 Local Agent Gateway
         |
-        | private Codex App Server stdio  (or Claude/Grok CLI headless)
+        | private Codex App Server stdio, Claude/Grok CLI headless, or Cursor SDK
         v
-Dedicated local login (CODEX_HOME, Claude, or ~/.grok)
+Dedicated local login (CODEX_HOME, Claude, ~/.grok) or Cursor API key
         v
 Operator subscription
 ```
@@ -55,7 +55,9 @@ When `CODEXGW_INFERENCE_PROVIDER=grok`, authenticate the Grok CLI before enablin
 grok login
 ```
 
-The Gateway MUST NOT accept an `XAI_API_KEY` on public requests. For the Codex path, the dedicated home MUST continue to contain a ChatGPT account login, and API-key-backed Codex sessions MUST be rejected. OAuth access tokens, refresh tokens, ID tokens, and account identifiers MUST NOT appear in public requests, responses, logs, or audit events.
+When `CODEXGW_INFERENCE_PROVIDER=cursor`, set `CODEXGW_CURSOR_API_KEY` from Cursor Dashboard → Integrations. The LaunchAgent stores that key in the login Keychain and MUST NOT write it to a release config file.
+
+The Gateway MUST NOT accept an `XAI_API_KEY` or Cursor API key on public requests. For the Codex path, the dedicated home MUST continue to contain a ChatGPT account login, and API-key-backed Codex sessions MUST be rejected. OAuth access tokens, refresh tokens, ID tokens, and account identifiers MUST NOT appear in public requests, responses, logs, or audit events.
 
 Every `/v1` request requires the existing Gateway credential:
 
@@ -96,9 +98,10 @@ The public model ID is one stable Gateway alias, selected by `CODEXGW_INFERENCE_
 ```text
 codex-subscription   # codex or claude
 grok-subscription    # grok
+cursor-subscription  # cursor
 ```
 
-For Codex this alias maps to `CODEXGW_CODEX_MODEL` when configured, otherwise to the default selected by Codex for the authenticated account. For Grok it maps to `CODEXGW_GROK_MODEL` when configured, otherwise to the Grok CLI default. A request cannot override the server-selected upstream model.
+For Codex this alias maps to `CODEXGW_CODEX_MODEL` when configured, otherwise to the default selected by Codex for the authenticated account. For Grok it maps to `CODEXGW_GROK_MODEL` when configured, otherwise to the Grok CLI default. For Cursor it maps to `CODEXGW_CURSOR_MODEL` when configured, otherwise to `composer-2.5`. A request cannot override the server-selected upstream model.
 
 The Gateway MUST NOT enumerate upstream account entitlements or expose private upstream model metadata.
 
@@ -151,7 +154,7 @@ If `Idempotency-Key` is omitted, the Gateway creates an internal unique key and 
 
 | Property | Required | Type | Contract |
 | --- | --- | --- | --- |
-| `model` | yes | string | Must equal the active Gateway alias (`codex-subscription` or `grok-subscription`). |
+| `model` | yes | string | Must equal the active Gateway alias (`codex-subscription`, `grok-subscription`, or `cursor-subscription`). |
 | `input` | yes | string | Non-empty plain-text user input. |
 | `instructions` | no | string | Non-empty plain-text instructions placed in a separately delimited Gateway prompt section. This approximates, but does not claim full parity with, an upstream developer message. |
 | `stream` | no | boolean | Defaults to `false`; when true, returns Responses SSE events. |
@@ -278,7 +281,7 @@ Clients MUST branch primarily on HTTP status and `error.code`; message text is n
 | `401` | `authentication_error` | `AUTH_REQUIRED` |
 | `404` | `invalid_request_error` | `NOT_FOUND` |
 | `409` | `invalid_request_error` | `IDEMPOTENCY_CONFLICT`, cancellation conflict |
-| `429` | `rate_limit_error` | `QUEUE_FULL`, `CODEX_RATE_LIMITED`, `CLAUDE_RATE_LIMITED`, `GROK_RATE_LIMITED` |
+| `429` | `rate_limit_error` | `QUEUE_FULL`, `CODEX_RATE_LIMITED`, `CLAUDE_RATE_LIMITED`, `GROK_RATE_LIMITED`, `CURSOR_RATE_LIMITED` |
 | `502` | `api_error` | `CODEX_EXECUTION_FAILED`, `CODEX_OVERLOADED` |
 | `503` | `api_error` | `CODEX_UNAUTHORIZED`, `CODEX_UNSUPPORTED_VERSION`, dependency not ready |
 | `504` | `api_error` | Codex or compatibility wait timeout |

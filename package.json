@@ -24,6 +24,7 @@
     "verify": "node --run lint && node --run typecheck && node --run test && node --run build"
   },
   "dependencies": {
+    "@cursor/sdk": "^1.0.28",
     "@fastify/helmet": "^13.1.0",
     "@fastify/rate-limit": "^11.1.0",
     "@fastify/swagger": "^9.8.1",

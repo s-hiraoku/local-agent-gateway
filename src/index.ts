@@ -4,6 +4,7 @@ import { limaAppServerLauncher } from "./adapters/codex/launcher.js";
 import { defaultLimaClient } from "./adapters/codex/lima/client.js";
 import { CodexAppServerRunner } from "./adapters/codex/runner.js";
 import { ClaudeHeadlessRunner } from "./adapters/claude/runner.js";
+import { CursorSdkRunner } from "./adapters/cursor/runner.js";
 import { GrokHeadlessRunner } from "./adapters/grok/runner.js";
 import type { CodingRunner } from "./adapters/runner.js";
 import { JobProcessor } from "./application/job-processor.js";
@@ -52,11 +53,19 @@ const grokRunner = new GrokHeadlessRunner({
   turnTimeoutMs: config.turnTimeoutMs,
   maxResultBytes: config.maxResultBytes
 });
+const cursorRunner = config.inferenceProvider === "cursor"
+  ? new CursorSdkRunner({
+      apiKey: config.cursorApiKey ?? "",
+      ...(config.cursorModel ? { model: config.cursorModel } : {}),
+      turnTimeoutMs: config.turnTimeoutMs,
+      maxResultBytes: config.maxResultBytes
+    })
+  : undefined;
 const inferenceRunner: CodingRunner = config.inferenceProvider === "claude"
   ? claudeRunner
   : config.inferenceProvider === "grok"
     ? grokRunner
-    : codexRunner;
+    : cursorRunner ?? codexRunner;
 const processor = new JobProcessor(
   store,
   { coding: codexRunner, inference: inferenceRunner },

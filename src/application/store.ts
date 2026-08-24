@@ -506,7 +506,8 @@ export class GatewayStore {
         rateLimitedByBackend: {
           codex: failuresByErrorCode.CODEX_RATE_LIMITED ?? 0,
           claude: failuresByErrorCode.CLAUDE_RATE_LIMITED ?? 0,
-          grok: failuresByErrorCode.GROK_RATE_LIMITED ?? 0
+          grok: failuresByErrorCode.GROK_RATE_LIMITED ?? 0,
+          cursor: failuresByErrorCode.CURSOR_RATE_LIMITED ?? 0
         },
         completedDurationSeconds: { count: durationCount, p50: percentile(0.5), p95: percentile(0.95) }
       },

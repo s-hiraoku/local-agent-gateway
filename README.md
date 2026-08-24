@@ -1,6 +1,6 @@
 # local-agent-gateway
 
-Local Agent Gateway is a private, single-owner API for using local AI capabilities from trusted external applications. Version 2 is a clean rewrite: coding runs through Codex App Server over private stdio; inference can use Codex, Claude Code, or Grok Build; future image and audio capabilities will use the OpenAI Platform API behind separate adapters.
+Local Agent Gateway is a private, single-owner API for using local AI capabilities from trusted external applications. Version 2 is a clean rewrite: coding runs through Codex App Server over private stdio; inference can use Codex, Claude Code, Grok Build, or the Cursor SDK; future image and audio capabilities will use the OpenAI Platform API behind separate adapters.
 
 The public API never exposes a raw working directory, Codex thread ID, App Server JSON-RPC method, upstream credential, arbitrary shell endpoint, or `danger-full-access` mode.
 
@@ -10,7 +10,7 @@ Implemented:
 
 - authenticated, read-only coding conversations on Codex;
 - atomic one-shot coding runs for stateless clients such as Decision-Agent;
-- repository-free inference turns on Codex, Claude Code, or Grok Build;
+- repository-free inference turns on Codex, Claude Code, Grok Build, or Cursor;
 - JSON Schema-constrained output with strict local result validation;
 - durable SQLite jobs and attempt history;
 - encrypted prompt, result, and event payloads;
@@ -27,7 +27,7 @@ Implemented:
 Not implemented yet:
 
 - write-capable worktrees and patch artifacts;
-- Cursor IDE / `@cursor/sdk` as a backend or custom OpenAI provider;
+- Cursor IDE as a custom OpenAI provider pointed at this Gateway;
 - `/v1/chat/completions` and other CLIProxyAPI-style inbound dialects;
 - image, audio, realtime, or general OpenAI Platform Responses API adapters;
 - multi-user identity or token administration;
@@ -44,20 +44,21 @@ Clients authenticate only to the Gateway. They never name a working directory, C
 | Job | Backend | Credential | Scope |
 | --- | --- | --- | --- |
 | `coding.turn` | Codex App Server only | dedicated ChatGPT/Codex login in `CODEX_HOME` | Read-only review of a registered repository: conversations, `/v2/coding/runs`, structured output, SSE |
-| `inference.turn` | `CODEXGW_INFERENCE_PROVIDER`: `codex` (default), `claude`, or `grok` | matching local CLI login | Text-in / JSON-out against a private empty directory. No `repositoryId` |
+| `inference.turn` | `CODEXGW_INFERENCE_PROVIDER`: `codex` (default), `claude`, `grok`, or `cursor` | matching local CLI login, or a Cursor Dashboard API key for `cursor` | Text-in / JSON-out against a private empty directory. No `repositoryId` |
 
-`GET /readyz` always probes Codex (supported CLI version and ChatGPT login), and also probes the selected inference CLI when it is not Codex. Authentication of Claude or Grok is not probed on every poll, because that would consume subscription usage; an unauthenticated CLI fails on the first real turn.
+`GET /readyz` always probes Codex (supported CLI version and ChatGPT login), and also probes the selected inference backend when it is not Codex. Authentication of Claude, Grok, or Cursor is not probed on every poll, because that would consume subscription usage; a missing login or key fails on the first real turn.
 
-Cursor (the IDE or `@cursor/sdk`) is not a backend. Lima isolation is Codex coding only and remains opt-in.
+Cursor here is `@cursor/sdk` billed against the owner's Cursor plan. Pointing the Cursor IDE at this Gateway as a custom OpenAI provider is not implemented. Lima isolation is Codex coding only and remains opt-in.
 
 ## Requirements
 
 - Node.js 26 (`.node-version` pins the preferred patch)
 - pnpm 11.13
-- a current Codex CLI with App Server support, pinned inside the range in `src/adapters/codex/compatibility.ts` (currently 0.128.0–0.149.99). Required even when inference uses Claude or Grok, because `/readyz` and coding turns always use Codex
+- a current Codex CLI with App Server support, pinned inside the range in `src/adapters/codex/compatibility.ts` (currently 0.128.0–0.149.99). Required even when inference uses Claude, Grok, or Cursor, because `/readyz` and coding turns always use Codex
 - a dedicated `CODEX_HOME` authenticated with the intended ChatGPT/Codex account
 - optional: Claude Code (`claude auth login`) when `CODEXGW_INFERENCE_PROVIDER=claude`
 - optional: Grok Build (`grok login`) when `CODEXGW_INFERENCE_PROVIDER=grok`. Uses `~/.grok/auth.json`, not `XAI_API_KEY`
+- optional: a Cursor user or service-account API key (`CODEXGW_CURSOR_API_KEY`) when `CODEXGW_INFERENCE_PROVIDER=cursor`. Create it at Cursor Dashboard → Integrations. Do not commit the key.
 
 The dedicated home must not contain `config.toml`; Gateway startup rejects it to prevent accidental MCP or personal configuration inheritance.
 
@@ -106,11 +107,13 @@ Important optional variables:
 | `CODEXGW_CODEX_HOME` | `~/.codex-gateway` |
 | `CODEXGW_CODEX_MODEL` | Codex account/config default |
 | `CODEXGW_OPENAI_COMPATIBILITY_ENABLED` | `false`; enables the loopback-only text Responses subset |
-| `CODEXGW_INFERENCE_PROVIDER` | `codex`; set to `claude` or `grok` to run inference turns on that CLI |
+| `CODEXGW_INFERENCE_PROVIDER` | `codex`; set to `claude`, `grok`, or `cursor` to run inference turns on that backend |
 | `CODEXGW_CLAUDE_COMMAND` | `claude` |
 | `CODEXGW_CLAUDE_MODEL` | Claude account/config default |
 | `CODEXGW_GROK_COMMAND` | `grok` |
 | `CODEXGW_GROK_MODEL` | Grok account/config default |
+| `CODEXGW_CURSOR_API_KEY` | required when inference is `cursor`; user or service-account key from the Cursor dashboard |
+| `CODEXGW_CURSOR_MODEL` | `composer-2.5` |
 | `CODEXGW_CODEX_EXECUTOR` | `host`; set to `lima` only after installing Lima (`brew install lima`) and creating the VM |
 | `CODEXGW_LIMA_COMMAND` | `limactl` |
 | `CODEXGW_LIMA_INSTANCE` | `codexgw` |
@@ -184,23 +187,28 @@ curl -X POST http://127.0.0.1:8787/v2/inference/runs \
 
 Inference jobs poll and read `structuredOutput` exactly like coding runs (`kind` is `inference.turn`, `repositoryId` is `null`).
 
-Inference turns can run on Claude Code or Grok Build instead of Codex. Coding turns are
+Inference turns can run on Claude Code, Grok Build, or the Cursor SDK instead of Codex. Coding turns are
 unaffected and always run on Codex, because repository sandboxing is
-Codex-specific. Authenticate the chosen CLI once, then:
+Codex-specific. Authenticate the chosen backend once, then:
 
 ```bash
 CODEXGW_INFERENCE_PROVIDER=claude pnpm dev
 # or
 CODEXGW_INFERENCE_PROVIDER=grok pnpm dev
+# or
+CODEXGW_INFERENCE_PROVIDER=cursor CODEXGW_CURSOR_API_KEY=cursor_... pnpm dev
 ```
 
 Grok uses the owner's `grok login` session (`~/.grok/auth.json`), not an
-`XAI_API_KEY`. The turn runs headless with built-in tools disabled against
-the same private single-use working directory. Request bodies never carry an
-API key. Readiness (`/readyz`) probes every active backend for presence, so a
-missing CLI surfaces there; authentication is deliberately not probed, because
-doing so on every poll would consume subscription usage. An unauthenticated
-CLI fails on the first real turn (`CLAUDE_UNAUTHORIZED` or `GROK_UNAUTHORIZED`).
+`XAI_API_KEY`. Cursor uses a Dashboard API key and bills the same request
+pools as the IDE; spend appears under the SDK tag. Both run with built-in
+tools disabled against the same private single-use working directory. Request
+bodies never carry an upstream key. Readiness (`/readyz`) probes every active
+backend for presence, so a missing CLI or SDK package surfaces there;
+authentication is deliberately not probed, because doing so on every poll
+would consume subscription usage. An unauthenticated backend fails on the
+first real turn (`CLAUDE_UNAUTHORIZED`, `GROK_UNAUTHORIZED`, or
+`CURSOR_UNAUTHORIZED`).
 
 For trusted OpenAI SDK clients on the same host, the optional compatibility surface exposes `GET /v1/models` and `POST /v1/responses`. Enable it only while binding to loopback:
 
@@ -231,12 +239,12 @@ const client = new OpenAI({
 });
 
 const response = await client.responses.create({
-  model: "codex-subscription", // or "grok-subscription" when inference is grok
+  model: "codex-subscription", // grok-subscription or cursor-subscription when that provider is selected
   input: "Summarize this text: ..."
 });
 ```
 
-This is a strict text-only Responses subset, not `/v1/chat/completions` and not an OpenAI Platform API replacement. The public model alias is `codex-subscription` for Codex or Claude inference, and `grok-subscription` when `CODEXGW_INFERENCE_PROVIDER=grok`. Unsupported fields are rejected. See [OpenAI Responses compatibility](docs/OPENAI_RESPONSES_COMPATIBILITY.md).
+This is a strict text-only Responses subset, not `/v1/chat/completions` and not an OpenAI Platform API replacement. The public model alias is `codex-subscription` for Codex or Claude inference, `grok-subscription` when `CODEXGW_INFERENCE_PROVIDER=grok`, and `cursor-subscription` when inference is Cursor. Unsupported fields are rejected. See [OpenAI Responses compatibility](docs/OPENAI_RESPONSES_COMPATIBILITY.md).
 
 Create a conversation:
 
@@ -276,7 +284,7 @@ curl -H "Authorization: Bearer $CODEXGW_API_TOKEN" \
   'http://127.0.0.1:8787/v2/metrics?windowHours=24'
 ```
 
-It reports job counts by status and by kind, queue depth and the oldest queued job's age, the number of retried jobs (a Codex-flakiness signal), and — over a window (default 24h, 1–168) — failures grouped by error code, rate-limit hits by backend (`codex` / `claude` / `grok`), and completed-job duration percentiles (p50/p95). `retention.lastRunAt` and `retention.lastPruned` report the latest successful retention sweep across restarts; before any sweep completes they are `null` and zero counts. The percentile query is backed by a `(status, completedAt)` index. `windowHours` bounds both the query cost and the freshness of the latency figures.
+It reports job counts by status and by kind, queue depth and the oldest queued job's age, the number of retried jobs (a Codex-flakiness signal), and — over a window (default 24h, 1–168) — failures grouped by error code, rate-limit hits by backend (`codex` / `claude` / `grok` / `cursor`), and completed-job duration percentiles (p50/p95). `retention.lastRunAt` and `retention.lastPruned` report the latest successful retention sweep across restarts; before any sweep completes they are `null` and zero counts. The percentile query is backed by a `(status, completedAt)` index. `windowHours` bounds both the query cost and the freshness of the latency figures.
 
 ## Security boundary
 
