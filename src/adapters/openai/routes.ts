@@ -390,6 +390,8 @@ function jobError(job: PublicJob): GatewayError {
       return new GatewayError("CLAUDE_RATE_LIMITED", message, 429, retryable);
     case "GROK_RATE_LIMITED":
       return new GatewayError("GROK_RATE_LIMITED", message, 429, retryable);
+    case "CURSOR_RATE_LIMITED":
+      return new GatewayError("CURSOR_RATE_LIMITED", message, 429, retryable);
     case "CODEX_UNAUTHORIZED":
       return new GatewayError("CODEX_UNAUTHORIZED", message, 503, retryable);
     case "CODEX_UNSUPPORTED_VERSION":
@@ -404,6 +406,12 @@ function jobError(job: PublicJob): GatewayError {
       return new GatewayError("GROK_TIMEOUT", message, 504, retryable);
     case "GROK_EXECUTION_FAILED":
       return new GatewayError("GROK_EXECUTION_FAILED", message, 502, retryable);
+    case "CURSOR_UNAUTHORIZED":
+      return new GatewayError("CURSOR_UNAUTHORIZED", message, 503, retryable);
+    case "CURSOR_TIMEOUT":
+      return new GatewayError("CURSOR_TIMEOUT", message, 504, retryable);
+    case "CURSOR_EXECUTION_FAILED":
+      return new GatewayError("CURSOR_EXECUTION_FAILED", message, 502, retryable);
     default:
       return new GatewayError("CODEX_EXECUTION_FAILED", message, 502, retryable);
   }

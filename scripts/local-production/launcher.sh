@@ -38,8 +38,8 @@ INFERENCE_PROVIDER="codex"
 if [[ -f "${CONFIG}/inference-provider" ]]; then
   INFERENCE_PROVIDER="$(/bin/cat "${CONFIG}/inference-provider")"
 fi
-[[ "${INFERENCE_PROVIDER}" == "codex" || "${INFERENCE_PROVIDER}" == "claude" || "${INFERENCE_PROVIDER}" == "grok" ]] \
-  || fail "inference provider configuration must be codex, claude, or grok"
+[[ "${INFERENCE_PROVIDER}" == "codex" || "${INFERENCE_PROVIDER}" == "claude" || "${INFERENCE_PROVIDER}" == "grok" || "${INFERENCE_PROVIDER}" == "cursor" ]] \
+  || fail "inference provider configuration must be codex, claude, grok, or cursor"
 
 CLAUDE_COMMAND=""
 if [[ -f "${CONFIG}/claude-command" ]]; then
@@ -57,6 +57,13 @@ fi
 if [[ "${INFERENCE_PROVIDER}" == "grok" ]]; then
   [[ -n "${GROK_COMMAND}" ]] || fail "the grok inference provider requires a configured Grok executable"
   [[ -x "${GROK_COMMAND}" ]] || fail "configured Grok executable is unavailable"
+fi
+
+CURSOR_API_KEY=""
+if [[ "${INFERENCE_PROVIDER}" == "cursor" ]]; then
+  CURSOR_API_KEY="$(/usr/bin/security find-generic-password -a "${ACCOUNT}" -s "${LABEL}.cursor-api-key" -w)" \
+    || fail "Cursor API key could not be read from the login Keychain"
+  [[ -n "${CURSOR_API_KEY}" ]] || fail "the cursor inference provider requires a Cursor API key in the login Keychain"
 fi
 
 API_TOKEN="$(/usr/bin/security find-generic-password -a "${ACCOUNT}" -s "${LABEL}.api-token" -w)" \
@@ -86,6 +93,12 @@ fi
 if [[ -f "${CONFIG}/grok-model" ]]; then
   export CODEXGW_GROK_MODEL="$(/bin/cat "${CONFIG}/grok-model")"
 fi
+if [[ -n "${CURSOR_API_KEY}" ]]; then
+  export CODEXGW_CURSOR_API_KEY="${CURSOR_API_KEY}"
+fi
+if [[ -f "${CONFIG}/cursor-model" ]]; then
+  export CODEXGW_CURSOR_MODEL="$(/bin/cat "${CONFIG}/cursor-model")"
+fi
 export LOG_LEVEL="info"
 if [[ -n "${GROK_COMMAND}" ]]; then
   export PATH="$(/usr/bin/dirname "${GROK_COMMAND}"):$(/usr/bin/dirname "${CODEX_COMMAND}"):${RELEASE}/runtime:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin"
@@ -93,6 +106,6 @@ else
   export PATH="$(/usr/bin/dirname "${CODEX_COMMAND}"):${RELEASE}/runtime:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin"
 fi
 
-unset API_TOKEN ENCRYPTION_KEY
+unset API_TOKEN ENCRYPTION_KEY CURSOR_API_KEY
 cd "${RELEASE}"
 exec "${RELEASE}/runtime/node" "${RELEASE}/dist/index.js"

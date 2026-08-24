@@ -5,15 +5,19 @@ import type { GatewayConfig } from "../../infrastructure/config.js";
 
 export const OPENAI_COMPATIBILITY_MODEL = "codex-subscription";
 export const GROK_COMPATIBILITY_MODEL = "grok-subscription";
+export const CURSOR_COMPATIBILITY_MODEL = "cursor-subscription";
 
 export type OpenAICompatibilityModel =
   | typeof OPENAI_COMPATIBILITY_MODEL
-  | typeof GROK_COMPATIBILITY_MODEL;
+  | typeof GROK_COMPATIBILITY_MODEL
+  | typeof CURSOR_COMPATIBILITY_MODEL;
 
 export function openaiCompatibilityModel(
   provider: GatewayConfig["inferenceProvider"]
 ): OpenAICompatibilityModel {
-  return provider === "grok" ? GROK_COMPATIBILITY_MODEL : OPENAI_COMPATIBILITY_MODEL;
+  if (provider === "grok") return GROK_COMPATIBILITY_MODEL;
+  if (provider === "cursor") return CURSOR_COMPATIBILITY_MODEL;
+  return OPENAI_COMPATIBILITY_MODEL;
 }
 
 export type OpenAIResponseRequest = {

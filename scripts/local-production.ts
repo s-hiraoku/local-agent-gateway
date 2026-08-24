@@ -22,6 +22,7 @@ import { fileURLToPath } from "node:url";
 export const LAUNCH_AGENT_LABEL = "com.s-hiraoku.local-agent-gateway";
 const KEYCHAIN_API_TOKEN = `${LAUNCH_AGENT_LABEL}.api-token`;
 const KEYCHAIN_ENCRYPTION_KEY = `${LAUNCH_AGENT_LABEL}.encryption-key`;
+const KEYCHAIN_CURSOR_API_KEY = `${LAUNCH_AGENT_LABEL}.cursor-api-key`;
 const scriptDirectory = dirname(fileURLToPath(import.meta.url));
 const projectRoot = resolve(scriptDirectory, "..");
 
@@ -130,6 +131,17 @@ function ensureSecrets(account: string): void {
   if (!keychainHas(account, KEYCHAIN_ENCRYPTION_KEY)) {
     addKeychainSecret(account, KEYCHAIN_ENCRYPTION_KEY, randomBytes(32).toString("base64"));
   }
+}
+
+function ensureCursorSecret(account: string): void {
+  if (keychainHas(account, KEYCHAIN_CURSOR_API_KEY)) return;
+  const fromEnv = process.env.CODEXGW_CURSOR_API_KEY?.trim();
+  if (!fromEnv || fromEnv.length < 20) {
+    throw new Error(
+      "cursor inference requires CODEXGW_CURSOR_API_KEY so it can be stored in the login Keychain"
+    );
+  }
+  addKeychainSecret(account, KEYCHAIN_CURSOR_API_KEY, fromEnv);
 }
 
 function writePrivate(path: string, value: string): void {
@@ -353,8 +365,9 @@ async function install(): Promise<void> {
   if (openaiCompatibility !== "true" && openaiCompatibility !== "false") {
     throw new Error("--openai-compatibility must be true or false");
   }
-  // Inference turns may run on Claude Code or Grok Build instead of Codex. Coding turns are
-  // always Codex, so the Claude executable is only required when selected.
+  // Inference turns may run on Claude Code, Grok Build, or Cursor instead of
+  // Codex. Coding turns are always Codex, so extra CLIs/keys are only required
+  // when that provider is selected.
   const existingSetting = (name: string): string | undefined => {
     const versioned = join(base, "current", "config", name);
     const legacy = join(base, "config", name);
@@ -362,8 +375,13 @@ async function install(): Promise<void> {
     return existsSync(path) ? readFileSync(path, "utf8").trim() : undefined;
   };
   const inferenceProvider = option("--inference-provider") ?? existingSetting("inference-provider") ?? "codex";
-  if (inferenceProvider !== "codex" && inferenceProvider !== "claude" && inferenceProvider !== "grok") {
-    throw new Error("--inference-provider must be codex, claude, or grok");
+  if (
+    inferenceProvider !== "codex"
+    && inferenceProvider !== "claude"
+    && inferenceProvider !== "grok"
+    && inferenceProvider !== "cursor"
+  ) {
+    throw new Error("--inference-provider must be codex, claude, grok, or cursor");
   }
   // Resolved through `which` exactly like the Codex executable, so the launcher
   // always receives an absolute path rather than relying on the service PATH.
@@ -375,6 +393,15 @@ async function install(): Promise<void> {
     ?? existingSetting("grok-command")
     ?? (inferenceProvider === "grok" ? commandPath("grok") : undefined);
   const grokModel = option("--grok-model") ?? existingSetting("grok-model");
+  const cursorModel = option("--cursor-model") ?? existingSetting("cursor-model");
+  if (inferenceProvider === "cursor" && !keychainHas(account, KEYCHAIN_CURSOR_API_KEY)) {
+    const fromEnv = process.env.CODEXGW_CURSOR_API_KEY?.trim();
+    if (!fromEnv || fromEnv.length < 20) {
+      throw new Error(
+        "cursor inference requires CODEXGW_CURSOR_API_KEY so it can be stored in the login Keychain"
+      );
+    }
+  }
 
   const worktreeStatus = execFileSync("/usr/bin/git", ["status", "--porcelain"], {
     cwd: projectRoot,
@@ -433,6 +460,7 @@ async function install(): Promise<void> {
     if (claudeModel) writePrivate(join(releaseConfig, "claude-model"), `${claudeModel}\n`);
     if (grokCommand) writePrivate(join(releaseConfig, "grok-command"), `${grokCommand}\n`);
     if (grokModel) writePrivate(join(releaseConfig, "grok-model"), `${grokModel}\n`);
+    if (cursorModel) writePrivate(join(releaseConfig, "cursor-model"), `${cursorModel}\n`);
     writePrivate(join(staging, ".pending-activation"), "");
     renameSync(staging, release);
   } catch (error) {
@@ -441,6 +469,7 @@ async function install(): Promise<void> {
   }
 
   ensureSecrets(account);
+  if (inferenceProvider === "cursor") ensureCursorSecret(account);
   if (previousTarget) snapshotLegacyReleaseAssets(base, previousTarget);
   const launcher = join(base, "bin", "launcher.sh");
   const gatewayctl = join(base, "bin", "gatewayctl");
@@ -484,7 +513,7 @@ const entrypoint = process.argv[1] ? realpathSync(process.argv[1]) : "";
 if (entrypoint === fileURLToPath(import.meta.url)) {
   const command = process.argv[2];
   if (command !== "install") {
-    console.error("usage: pnpm local:install -- [--repositories-json JSON] [--codex-home PATH] [--openai-compatibility true|false] [--inference-provider codex|claude|grok] [--claude-command PATH] [--claude-model NAME] [--grok-command PATH] [--grok-model NAME]");
+    console.error("usage: pnpm local:install -- [--repositories-json JSON] [--codex-home PATH] [--openai-compatibility true|false] [--inference-provider codex|claude|grok|cursor] [--claude-command PATH] [--claude-model NAME] [--grok-command PATH] [--grok-model NAME] [--cursor-model NAME]");
     process.exitCode = 2;
   } else {
     install().catch((error: unknown) => {

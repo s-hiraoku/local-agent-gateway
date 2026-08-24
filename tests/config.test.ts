@@ -85,7 +85,7 @@ describe("loadConfig", () => {
     }).limaAllowUnprovenToolIsolation).toBe(true);
   });
 
-  it("defaults the inference provider to codex and accepts claude or grok", () => {
+  it("defaults the inference provider to codex and accepts claude, grok, or cursor", () => {
     expect(loadConfig(validEnv()).inferenceProvider).toBe("codex");
     expect(loadConfig({
       ...validEnv(),
@@ -95,10 +95,24 @@ describe("loadConfig", () => {
       ...validEnv(),
       CODEXGW_INFERENCE_PROVIDER: "grok"
     }).inferenceProvider).toBe("grok");
+    expect(loadConfig({
+      ...validEnv(),
+      CODEXGW_INFERENCE_PROVIDER: "cursor",
+      CODEXGW_CURSOR_API_KEY: "cursor_test_key_1234567890",
+      CODEXGW_CURSOR_MODEL: "grok-4.6"
+    })).toMatchObject({
+      inferenceProvider: "cursor",
+      cursorApiKey: "cursor_test_key_1234567890",
+      cursorModel: "grok-4.6"
+    });
+    expect(() => loadConfig({
+      ...validEnv(),
+      CODEXGW_INFERENCE_PROVIDER: "cursor"
+    })).toThrow(/CODEXGW_CURSOR_API_KEY/);
     expect(() => loadConfig({
       ...validEnv(),
       CODEXGW_INFERENCE_PROVIDER: "gpt"
-    })).toThrow(/'codex', 'claude', or 'grok'/);
+    })).toThrow(/'codex', 'claude', 'grok', or 'cursor'/);
   });
 
   it("defaults the Claude command and leaves the model unset", () => {

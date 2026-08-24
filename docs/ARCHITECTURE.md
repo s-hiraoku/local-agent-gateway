@@ -24,12 +24,12 @@ The codebase separates four concerns:
 
 - `domain`: provider-neutral IDs, job states, events, and public errors;
 - `application`: conversations, durable submission, job claiming, cancellation, and recovery;
-- `adapters`: backend protocol translation behind one provider-neutral runner contract (`adapters/runner.ts`), currently Codex App Server, Claude Code headless, and Grok Build headless;
+- `adapters`: backend protocol translation behind one provider-neutral runner contract (`adapters/runner.ts`), currently Codex App Server, Claude Code headless, Grok Build headless, and Cursor SDK;
 - `infrastructure`: configuration, encryption, SQLite, HTTP, logging, and lifecycle.
 
 The domain never exposes Codex thread or turn IDs. The Codex adapter maps a Gateway conversation to an internal App Server thread. A future OpenAI adapter will implement separate capability contracts instead of being forced through coding concepts such as repositories and sandboxes.
 
-The job processor selects a runner by job kind. `coding.turn` is always routed to Codex, because read-only repository sandboxing is a Codex App Server guarantee that the Claude and Grok adapters do not reproduce. `inference.turn` is routed to `CODEXGW_INFERENCE_PROVIDER`, since it is pure text-in/JSON-out against an empty single-use directory and therefore carries no repository to isolate. The Claude and Grok adapters run the official CLIs headless with filesystem, shell, and network tools disabled and take the final answer from native structured output rather than scraping stdout.
+The job processor selects a runner by job kind. `coding.turn` is always routed to Codex, because read-only repository sandboxing is a Codex App Server guarantee that the Claude, Grok, and Cursor adapters do not reproduce. `inference.turn` is routed to `CODEXGW_INFERENCE_PROVIDER`, since it is pure text-in/JSON-out against an empty single-use directory and therefore carries no repository to isolate. The Claude and Grok adapters run the official CLIs headless with filesystem, shell, and network tools disabled. The Cursor adapter runs `@cursor/sdk` in-process with built-in tools disabled. Both take the final answer from native structured output rather than scraping stdout.
 
 ## Current vertical slice
 
@@ -113,6 +113,7 @@ Read-only is not considered a complete confidentiality boundary. An opt-in Lima 
 | Codex App Server | dedicated local ChatGPT/Codex login | ChatGPT/Codex plan limits |
 | Claude Code headless | owner's local Claude CLI login | Claude subscription limits |
 | Grok Build headless | owner's local `grok login` session | grok.com / Grok Build plan limits |
+| Cursor SDK | server-side `CODEXGW_CURSOR_API_KEY` (user or service-account key) | Cursor plan request pools (SDK tag) |
 | OpenAI Platform adapters | server-side project credential | Platform billing and rate limits |
 | Gateway clients | Gateway-issued identity/token | Gateway authorization only |
 

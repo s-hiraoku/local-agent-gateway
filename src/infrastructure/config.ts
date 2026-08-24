@@ -20,11 +20,13 @@ export type GatewayConfig = {
   inferenceWorkspaceRoot: string;
   codexModel?: string;
   openaiCompatibilityEnabled: boolean;
-  inferenceProvider: "codex" | "claude" | "grok";
+  inferenceProvider: "codex" | "claude" | "grok" | "cursor";
   claudeCommand: string;
   claudeModel?: string;
   grokCommand: string;
   grokModel?: string;
+  cursorApiKey?: string;
+  cursorModel?: string;
   codexExecutor: "host" | "lima";
   limaCommand: string;
   limaInstance: string;
@@ -145,11 +147,29 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): GatewayConfig 
     );
   }
   const inferenceProvider = (env.CODEXGW_INFERENCE_PROVIDER ?? "codex").trim();
-  if (inferenceProvider !== "codex" && inferenceProvider !== "claude" && inferenceProvider !== "grok") {
-    throw new GatewayError("INVALID_REQUEST", "CODEXGW_INFERENCE_PROVIDER must be 'codex', 'claude', or 'grok'", 500);
+  if (
+    inferenceProvider !== "codex"
+    && inferenceProvider !== "claude"
+    && inferenceProvider !== "grok"
+    && inferenceProvider !== "cursor"
+  ) {
+    throw new GatewayError(
+      "INVALID_REQUEST",
+      "CODEXGW_INFERENCE_PROVIDER must be 'codex', 'claude', 'grok', or 'cursor'",
+      500
+    );
   }
   const claudeModel = env.CODEXGW_CLAUDE_MODEL?.trim();
   const grokModel = env.CODEXGW_GROK_MODEL?.trim();
+  const cursorApiKey = env.CODEXGW_CURSOR_API_KEY?.trim();
+  const cursorModel = env.CODEXGW_CURSOR_MODEL?.trim();
+  if (inferenceProvider === "cursor" && (!cursorApiKey || cursorApiKey.length < 20)) {
+    throw new GatewayError(
+      "INVALID_REQUEST",
+      "CODEXGW_CURSOR_API_KEY is required when CODEXGW_INFERENCE_PROVIDER is cursor",
+      500
+    );
+  }
   const codexExecutor = (env.CODEXGW_CODEX_EXECUTOR ?? "host").trim();
   if (codexExecutor !== "host" && codexExecutor !== "lima") {
     throw new GatewayError("INVALID_REQUEST", "CODEXGW_CODEX_EXECUTOR must be 'host' or 'lima'", 500);
@@ -175,6 +195,8 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): GatewayConfig 
     ...(claudeModel ? { claudeModel } : {}),
     grokCommand: env.CODEXGW_GROK_COMMAND ?? "grok",
     ...(grokModel ? { grokModel } : {}),
+    ...(inferenceProvider === "cursor" && cursorApiKey ? { cursorApiKey } : {}),
+    ...(cursorModel ? { cursorModel } : {}),
     codexExecutor,
     limaCommand: env.CODEXGW_LIMA_COMMAND ?? "limactl",
     limaInstance,
