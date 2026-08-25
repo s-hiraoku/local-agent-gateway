@@ -293,3 +293,15 @@ Gateway credentials and backend credentials are separate. Clients submit only Ga
 The optional `/v1` compatibility routes use the same Gateway bearer token. They do not expose OAuth endpoints or OAuth tokens, and cannot be enabled on a non-loopback bind address.
 
 `read-only` prevents writes and, with `approvalPolicy: never`, rejects interactive escalation. It is not by itself proof that Codex cannot read host files outside the repository. An opt-in Lima executor (`CODEXGW_CODEX_EXECUTOR=lima`) copies one repository snapshot into a dedicated VM and fail-closes `/readyz` unless the guest tool-isolation probe passes. The default LaunchAgent still runs Codex on the host. Until the acceptance tests in [Readable-root isolation](docs/READABLE_ROOT_ISOLATION.md) pass, run this only as a dedicated local service account against trusted repositories and trusted client applications. Do not expose the port directly to the public internet.
+
+## Documentation
+
+- [Architecture](docs/ARCHITECTURE.md): product boundary, capability adapters, and delivery sequence
+- [Threat model](docs/THREAT_MODEL.md): trusted parties, protected assets, and security invariants
+- [Readable-root isolation](docs/READABLE_ROOT_ISOLATION.md): Lima executor decisions and acceptance tests
+- [Client integration](docs/CLIENT_INTEGRATION.md): V2 API workflow and retry contract
+- [Event streaming](docs/EVENT_STREAMING.md): SSE event format and reconnect behavior
+- [Quality and operations](docs/QUALITY.md): supported runtime, verification, and release gates
+- [OpenAI Responses compatibility](docs/OPENAI_RESPONSES_COMPATIBILITY.md): opt-in text Responses subset
+- [Local production on macOS](docs/LOCAL_PRODUCTION.md): LaunchAgent install, backup, and rollback
+- [Docs index](docs/index.md): full document list and public route surface
