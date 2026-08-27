@@ -7,6 +7,7 @@ The current vertical slice implements subscription-backed, read-only coding and 
 ## Documents
 
 - [Architecture](ARCHITECTURE.md): product boundary, capability adapters, and delivery sequence.
+- [Codex App Server](CODEX_APP_SERVER.md): when the Gateway starts App Server, operator login, and the private adapter contract.
 - [Threat model](THREAT_MODEL.md): trusted parties, protected assets, security invariants, and unresolved isolation work.
 - [Readable-root isolation](READABLE_ROOT_ISOLATION.md): recorded Lima decisions, opt-in executor, residuals, and acceptance tests.
 - [Client integration](CLIENT_INTEGRATION.md): V2 API workflow and retry contract.

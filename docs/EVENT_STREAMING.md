@@ -1,6 +1,6 @@
 # Event Streaming
 
-`GET /v2/jobs/:jobId/events` returns encrypted-at-rest, normalized Gateway events through Server-Sent Events. It never replays raw App Server messages.
+`GET /v2/jobs/:jobId/events` returns encrypted-at-rest, normalized Gateway events through Server-Sent Events. It never replays raw App Server messages. How the adapter collects those notifications is in [Codex App Server](CODEX_APP_SERVER.md).
 
 ```text
 id: 3

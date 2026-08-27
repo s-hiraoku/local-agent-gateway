@@ -39,7 +39,7 @@ V2 currently supports `coding.turn` in read-only mode:
 2. A turn is submitted with an `Idempotency-Key` and stored as an encrypted durable job.
 3. The worker claims the job and records an attempt.
 4. A fresh App Server process starts with a dedicated `CODEX_HOME` and environment allowlist. The default executor is the host process. When `CODEXGW_CODEX_EXECUTOR=lima`, the same App Server protocol runs inside an operator-created Lima VM against a per-job read-only snapshot.
-5. The adapter initializes App Server, starts or resumes its internal thread, and starts a turn with fixed read-only/never-approve policy.
+5. The adapter initializes App Server, starts or resumes its internal thread, and starts a turn with fixed read-only/never-approve policy. Method names and notification handling are documented in [Codex App Server](CODEX_APP_SERVER.md); they are not part of the public API.
 6. Buffered JSON-RPC notifications are normalized and encrypted before SSE delivery.
 7. The final result is encrypted at rest and returned through the Gateway job resource.
 8. The child process is terminated. Cancellation and shutdown interrupt active turns.
@@ -136,6 +136,7 @@ Each phase must update public schemas, denial tests, threat model, operational l
 
 ## Upstream references
 
+- [Codex App Server usage in this Gateway](CODEX_APP_SERVER.md)
 - [Codex App Server](https://learn.chatgpt.com/docs/app-server.md)
 - [Codex authentication](https://learn.chatgpt.com/docs/auth.md)
 - [OpenAI image generation](https://developers.openai.com/api/docs/guides/image-generation)
