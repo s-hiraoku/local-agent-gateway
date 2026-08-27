@@ -44,6 +44,7 @@ Record important verification runs in `codex/ledger/verification.md` when work s
 - Create normal, review-ready pull requests by default.
 - Do not create draft pull requests unless the user explicitly asks for a draft.
 - This keeps Codex automatic code review eligible to run when a pull request is opened.
+- Cloud agents must create and update GitHub PRs with `gh`, authenticating as `GH_TOKEN="$GH_TOKEN_KAIZEN"` or `GH_TOKEN="$GH_TOKEN_PERSONAL"` (injected secrets). Do not rely on the default Cursor GitHub App token; it cannot create pull requests on this repository. Never print token values.
 
 ## Final Response
 
@@ -55,3 +56,4 @@ Summarize changed files, verification results, remaining risks, and follow-up wo
 - Standard scripts are in `package.json` (`dev`, `build`, `typecheck`, `lint`, `test`, `smoke`, `verify`). `pnpm verify` chains lint + typecheck + test + build. `scripts/verify.sh` additionally checks policy docs and shell syntax.
 - The server does NOT auto-load `.env`. `pnpm dev` (`tsx watch src/index.ts`) reads config only from real environment variables. To start it you must export at minimum: `CODEXGW_API_TOKEN` (>= 32 chars), `CODEXGW_DATA_ENCRYPTION_KEY` (exactly 32 bytes, base64), and `CODEXGW_REPOSITORIES_JSON` (required; may be `[]`, e.g. `[{"id":"gateway","path":"/workspace"}]`). Generate secrets with `openssl rand -base64 32`. Default bind is `127.0.0.1:8787`.
 - The Codex CLI is not installed in this environment. `GET /readyz` and any endpoint that actually executes a turn (`/v2/conversations/:id/turns`, `/v2/coding/runs`, `/v2/inference/runs`) will not complete without it. Endpoints that exercise auth + encrypted SQLite persistence work without Codex: `GET /healthz`, `GET /v2/repositories`, `POST /v2/conversations`, `GET /v2/metrics`, and the Swagger UI at `/docs`. Use those for smoke-testing a running server. `pnpm smoke` runs fully in-process with a fake runner and needs no Codex CLI.
+- GitHub PRs: use `gh` with `GH_TOKEN_KAIZEN` or `GH_TOKEN_PERSONAL`. Example: `GH_TOKEN="$GH_TOKEN_PERSONAL" gh pr create --repo s-hiraoku/local-agent-gateway ...`. The default `gh` login in this VM cannot create pull requests.
