@@ -15,7 +15,7 @@ Native dependency build scripts are denied by pnpm except for the version-locked
 - API submission is idempotent when clients preserve `Idempotency-Key`.
 - Stateless run conversation creation and submission are one transaction.
 - Structured results are exact-JSON parsed and locally schema-validated before completion.
-- `/readyz` always probes Codex App Server, requires a dedicated ChatGPT login, and fails closed when the Codex CLI version is outside the supported range. When inference is not Codex, it also probes that backend for presence (CLI binary or Cursor SDK), not authentication.
+- `/readyz` always probes Codex App Server, requires a dedicated ChatGPT login, and fails closed when the Codex CLI version is outside the supported range. When inference is not Codex, it also probes that backend for presence (CLI binary or Cursor SDK), not authentication. Operator login, job routing, and the private App Server method surface are in [Codex App Server](CODEX_APP_SERVER.md).
 - Read-only coding and repository-free inference are at-least-once across Gateway crashes.
 - Only read-only modes are enabled.
 - Each Codex job starts one App Server process. Claude and Grok start one CLI process. Cursor runs `@cursor/sdk` in-process.

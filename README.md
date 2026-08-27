@@ -50,6 +50,8 @@ Clients authenticate only to the Gateway. They never name a working directory, C
 
 Cursor here is `@cursor/sdk` billed against the owner's Cursor plan. Pointing the Cursor IDE at this Gateway as a custom OpenAI provider is not implemented. Lima isolation wraps Codex App Server only (coding turns and Codex-backed inference) and remains opt-in; Claude, Grok, and Cursor inference stay on the host.
 
+Clients never talk to App Server. How the Gateway starts it, authenticates `CODEX_HOME`, and maps turns is in [Codex App Server](docs/CODEX_APP_SERVER.md).
+
 ## Requirements
 
 - Node.js 26 (`.node-version` pins the preferred patch)
@@ -297,6 +299,7 @@ The optional `/v1` compatibility routes use the same Gateway bearer token. They 
 ## Documentation
 
 - [Architecture](docs/ARCHITECTURE.md): product boundary, capability adapters, and delivery sequence
+- [Codex App Server](docs/CODEX_APP_SERVER.md): operator login, when App Server runs, and the private adapter contract
 - [Threat model](docs/THREAT_MODEL.md): trusted parties, protected assets, and security invariants
 - [Readable-root isolation](docs/READABLE_ROOT_ISOLATION.md): Lima executor decisions and acceptance tests
 - [Client integration](docs/CLIENT_INTEGRATION.md): V2 API workflow and retry contract
