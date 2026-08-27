@@ -20,6 +20,21 @@ export function openaiCompatibilityModel(
   return OPENAI_COMPATIBILITY_MODEL;
 }
 
+export function compatibilityWaitTimeout(
+  provider: GatewayConfig["inferenceProvider"]
+): GatewayError {
+  if (provider === "claude") {
+    return new GatewayError("CLAUDE_TIMEOUT", "The Claude-backed response timed out", 504, true);
+  }
+  if (provider === "grok") {
+    return new GatewayError("GROK_TIMEOUT", "The Grok-backed response timed out", 504, true);
+  }
+  if (provider === "cursor") {
+    return new GatewayError("CURSOR_TIMEOUT", "The Cursor-backed response timed out", 504, true);
+  }
+  return new GatewayError("CODEX_TIMEOUT", "The Codex-backed response timed out", 504, true);
+}
+
 export type OpenAIResponseRequest = {
   model: OpenAICompatibilityModel;
   input: string;

@@ -11,9 +11,10 @@ Local Agent Gateway
   |-- identity and policy
   |-- durable jobs and encrypted events
   |-- capability adapters
-        |-- coding -> Codex App Server -> ChatGPT/Codex subscription
-        |-- image  -> OpenAI Platform API -> project billing (planned)
-        `-- audio  -> OpenAI Platform API -> project billing (planned)
+        |-- coding    -> Codex App Server -> ChatGPT/Codex subscription
+        |-- inference -> Codex, Claude Code, Grok Build, or Cursor SDK
+        |-- image     -> OpenAI Platform API -> project billing (planned)
+        `-- audio     -> OpenAI Platform API -> project billing (planned)
 ```
 
 Clients authenticate only to the Gateway. Backend credentials, billing domains, protocols, and policy remain explicit per capability. ChatGPT/Codex subscription access is not presented as a replacement for the OpenAI Platform API. The compatibility adapter translates only allowlisted text fields and constructs new response events; it does not forward raw OpenAI or App Server traffic.
@@ -29,11 +30,13 @@ The codebase separates four concerns:
 
 The domain never exposes Codex thread or turn IDs. The Codex adapter maps a Gateway conversation to an internal App Server thread. A future OpenAI adapter will implement separate capability contracts instead of being forced through coding concepts such as repositories and sandboxes.
 
-The job processor selects a runner by job kind. `coding.turn` is always routed to Codex, because read-only repository sandboxing is a Codex App Server guarantee that the Claude, Grok, and Cursor adapters do not reproduce. `inference.turn` is routed to `CODEXGW_INFERENCE_PROVIDER`, since it is pure text-in/JSON-out against an empty single-use directory and therefore carries no repository to isolate. The Claude and Grok adapters run the official CLIs headless with filesystem, shell, and network tools disabled. The Cursor adapter runs `@cursor/sdk` in-process with built-in tools disabled. Both take the final answer from native structured output rather than scraping stdout.
+The job processor selects a runner by job kind. `coding.turn` is always routed to Codex, because read-only repository sandboxing is a Codex App Server guarantee that the Claude, Grok, and Cursor adapters do not reproduce. `inference.turn` is routed to `CODEXGW_INFERENCE_PROVIDER`, since it is pure text-in/JSON-out against an empty single-use directory and therefore carries no repository to isolate. The Claude and Grok adapters run the official CLIs headless with filesystem, shell, and network tools disabled, and take the final answer from native structured output rather than scraping stdout. The Cursor adapter runs `@cursor/sdk` in-process with built-in tools disabled; when `outputSchema` is present it appends the schema to the prompt, because the SDK path has no native schema argument.
 
 ## Current vertical slice
 
-V2 currently supports `coding.turn` in read-only mode:
+V2 currently supports two read-only job kinds.
+
+`coding.turn`:
 
 1. A client creates a conversation for a server-registered repository ID.
 2. A turn is submitted with an `Idempotency-Key` and stored as an encrypted durable job.
@@ -46,7 +49,13 @@ V2 currently supports `coding.turn` in read-only mode:
 
 Different conversations may run concurrently. Turns within one conversation are claimed strictly one at a time so its internal Codex thread cannot fork or be overwritten by racing jobs.
 
-`POST /v2/coding/runs` is the stateless facade over the same model. It creates a private conversation and its first job in one transaction, avoiding partial creation and cross-request idempotency for clients that need a single answer. Optional structured output is a capability contract, not raw App Server passthrough: the Gateway limits the schema, forwards it, and independently validates exact final JSON before completing the job.
+`POST /v2/coding/runs` is the stateless facade over the same model. It creates a private conversation and its first job in one transaction, avoiding partial creation and cross-request idempotency for clients that need a single answer.
+
+`inference.turn` is submitted through `POST /v2/inference/runs`. It takes no `repositoryId`; extra body fields such as `repositoryId` are ignored rather than honored. The Gateway creates a private conversation with a null repository, claims the job, and runs it against a single-use empty directory under `CODEXGW_INFERENCE_WORKSPACE_ROOT`. Claude, Grok, and Cursor always execute on the host. When the inference provider is Codex and Lima is enabled, that empty directory is snapshotted into the guest the same way a coding workspace is. Inference conversations cannot receive later `/v2/conversations/:id/turns`; that route 404s when `repositoryId` is null.
+
+`GET /v2/capabilities` advertises both job kinds as enabled, read-only, and structured-output capable. It does not name the active inference provider. The optional `/v1/models` alias does, because `grok-subscription` and `cursor-subscription` are distinct from `codex-subscription`.
+
+Optional structured output is a Gateway contract, not raw backend passthrough: the schema subset is limited locally, then forwarded to Codex, Claude, or Grok, or appended to the Cursor prompt. The Gateway independently validates exact final JSON before completing the job.
 
 At-least-once recovery is intentional for read-only jobs: an interrupted attempt is marked failed and the job is requeued. This may consume subscription work twice. Write mode must use a different recovery contract.
 
@@ -55,6 +64,8 @@ At-least-once recovery is intentional for read-only jobs: an interrupted attempt
 Expose capabilities, not upstream protocols:
 
 ```text
+GET  /v2/capabilities
+GET  /v2/repositories
 POST /v2/conversations
 POST /v2/conversations/:id/turns
 POST /v2/coding/runs
@@ -97,14 +108,14 @@ Generated binary media will not be stored as SQLite blobs. A future artifact lay
 - no arbitrary shell execution API;
 - no public raw `cwd`, absolute path, Codex ID, command, stderr, or JSON-RPC payload;
 - no `danger-full-access` mode;
-- no client-supplied ChatGPT token, OpenAI API key, or refresh token;
+- no client-supplied ChatGPT token, OpenAI API key, XAI API key, Cursor API key, or refresh token;
 - no full prompt in logs or plaintext persistence;
 - no personal MCP/config inheritance by default;
 - no unbounded queues, output, events, stderr, or protocol waits;
 - no write mode without task-specific workspace isolation;
 - no capability without positive and negative authorization tests.
 
-Read-only is not considered a complete confidentiality boundary. An opt-in Lima executor isolates host and Gateway files from Codex and fail-closes readiness unless the guest tool-isolation probe passes. The default LaunchAgent remains host-local, and live VM evidence is still required. See [Threat model](THREAT_MODEL.md) and [Readable-root isolation](READABLE_ROOT_ISOLATION.md).
+Read-only is not considered a complete confidentiality boundary. An opt-in Lima executor isolates host and Gateway files from Codex App Server (coding turns and Codex-backed inference) and fail-closes readiness unless the guest tool-isolation probe passes. Claude, Grok, and Cursor inference stay on the host. The default LaunchAgent remains host-local, and live VM evidence is still required. See [Threat model](THREAT_MODEL.md) and [Readable-root isolation](READABLE_ROOT_ISOLATION.md).
 
 ## Credential and usage boundaries
 

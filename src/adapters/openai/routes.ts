@@ -11,6 +11,7 @@ import { GatewayStore } from "../../application/store.js";
 import { JobProcessor } from "../../application/job-processor.js";
 import {
   compatibilityIds,
+  compatibilityWaitTimeout,
   openaiCompatibilityModel,
   responseObject,
   toInferencePrompt,
@@ -150,7 +151,8 @@ export async function registerOpenAIResponsesRoutes(
         processor,
         config.turnTimeoutMs + config.rpcTimeoutMs,
         () => disconnected,
-        mayCancelJob
+        mayCancelJob,
+        config.inferenceProvider
       );
       if (job.status === "completed") return responseObject(job, body, "completed", secrets);
       throw jobError(job);
@@ -167,7 +169,8 @@ async function waitForTerminalJob(
   processor: JobProcessor,
   timeoutMs: number,
   disconnected: () => boolean,
-  mayCancelJob: boolean
+  mayCancelJob: boolean,
+  inferenceProvider: GatewayConfig["inferenceProvider"]
 ): Promise<PublicJob> {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
@@ -179,7 +182,7 @@ async function waitForTerminalJob(
     await new Promise((resolve) => setTimeout(resolve, 250));
   }
   if (mayCancelJob) await processor.cancel(ownerId, jobId).catch(() => undefined);
-  throw new GatewayError("CODEX_TIMEOUT", "The Codex-backed response timed out", 504, true);
+  throw compatibilityWaitTimeout(inferenceProvider);
 }
 
 async function streamResponse(
@@ -239,7 +242,8 @@ async function streamResponse(
       }
       if (cancellationDeadline !== undefined && now >= cancellationDeadline) {
         await writeEvent(reply.raw, "response.failed", {
-          type: "response.failed", response: responseObject(asTimeoutJob(job), request, "failed", secrets)
+          type: "response.failed",
+          response: responseObject(asTimeoutJob(job, config.inferenceProvider), request, "failed", secrets)
         });
         reply.raw.end();
         return;
@@ -255,7 +259,8 @@ async function streamResponse(
 
     if (cancellationDeadline !== undefined) {
       await writeEvent(reply.raw, "response.failed", {
-        type: "response.failed", response: responseObject(asTimeoutJob(job), request, "failed", secrets)
+        type: "response.failed",
+        response: responseObject(asTimeoutJob(job, config.inferenceProvider), request, "failed", secrets)
       });
       reply.raw.end();
       return;
@@ -322,15 +327,16 @@ async function drainAvailableDeltas(
   }
 }
 
-function asTimeoutJob(job: PublicJob): PublicJob {
+function asTimeoutJob(job: PublicJob, inferenceProvider: GatewayConfig["inferenceProvider"]): PublicJob {
+  const timeout = compatibilityWaitTimeout(inferenceProvider);
   return {
     ...job,
     status: "failed",
     completedAt: new Date().toISOString(),
     error: {
-      code: "CODEX_TIMEOUT",
-      message: "The Codex-backed response timed out",
-      retryable: true
+      code: timeout.code,
+      message: timeout.message,
+      retryable: timeout.retryable
     }
   };
 }
@@ -400,6 +406,12 @@ function jobError(job: PublicJob): GatewayError {
       return new GatewayError("CODEX_OVERLOADED", message, 503, retryable);
     case "CODEX_TIMEOUT":
       return new GatewayError("CODEX_TIMEOUT", message, 504, retryable);
+    case "CLAUDE_UNAUTHORIZED":
+      return new GatewayError("CLAUDE_UNAUTHORIZED", message, 503, retryable);
+    case "CLAUDE_TIMEOUT":
+      return new GatewayError("CLAUDE_TIMEOUT", message, 504, retryable);
+    case "CLAUDE_EXECUTION_FAILED":
+      return new GatewayError("CLAUDE_EXECUTION_FAILED", message, 502, retryable);
     case "GROK_UNAUTHORIZED":
       return new GatewayError("GROK_UNAUTHORIZED", message, 503, retryable);
     case "GROK_TIMEOUT":

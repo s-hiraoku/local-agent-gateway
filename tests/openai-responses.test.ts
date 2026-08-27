@@ -633,6 +633,83 @@ describe("OpenAI Responses compatibility", () => {
     });
   });
 
+  it("preserves Claude unauthorized, timeout, and execution codes on /v1", async () => {
+    const cases = [
+      ["CLAUDE_UNAUTHORIZED", 503],
+      ["CLAUDE_TIMEOUT", 504],
+      ["CLAUDE_EXECUTION_FAILED", 502]
+    ] as const;
+    for (const [code, status] of cases) {
+      const runner: CodingRunner = {
+        async run() {
+          throw new GatewayError(code, `Claude ${code}`, status === 504 ? 504 : status === 503 ? 401 : 502, code !== "CLAUDE_UNAUTHORIZED");
+        },
+        async checkReady() { /* ready */ }
+      };
+      const { app } = await testApp(runner);
+      const response = await app.inject({
+        method: "POST",
+        url: "/v1/responses",
+        headers: authorization,
+        payload: { model: "codex-subscription", input: "hello" }
+      });
+      expect(response.statusCode).toBe(status);
+      expect(response.json().error).toMatchObject({ type: "api_error", code });
+    }
+  });
+
+  it("reports the inference provider's timeout when the compatibility wait expires", async () => {
+    const runner: CodingRunner = {
+      async run(input) {
+        return new Promise<never>((_resolve, reject) => {
+          input.signal.addEventListener("abort", () => reject(input.signal.reason), { once: true });
+        });
+      },
+      async checkReady() { /* ready */ }
+    };
+    const { app } = await testApp(runner, true, {
+      inferenceProvider: "claude",
+      rpcTimeoutMs: 20,
+      turnTimeoutMs: 20
+    });
+    const response = await app.inject({
+      method: "POST",
+      url: "/v1/responses",
+      headers: authorization,
+      payload: { model: "codex-subscription", input: "hello" }
+    });
+    expect(response.statusCode).toBe(504);
+    expect(response.json().error).toMatchObject({ type: "api_error", code: "CLAUDE_TIMEOUT" });
+  });
+
+  it("reports the inference provider's timeout on a timed-out Responses stream", async () => {
+    const runner: CodingRunner = {
+      async run(input) {
+        return new Promise<never>((_resolve, reject) => {
+          input.signal.addEventListener("abort", () => {
+            setTimeout(() => reject(input.signal.reason), 100);
+          }, { once: true });
+        });
+      },
+      async checkReady() { /* ready */ }
+    };
+    const { app } = await testApp(runner, true, {
+      inferenceProvider: "grok",
+      rpcTimeoutMs: 20,
+      turnTimeoutMs: 20
+    });
+    const response = await app.inject({
+      method: "POST",
+      url: "/v1/responses",
+      headers: authorization,
+      payload: { model: "grok-subscription", input: "hello", stream: true }
+    });
+    expect(response.statusCode).toBe(200);
+    expect(response.body).toContain("event: response.failed");
+    expect(response.body).toContain('"code":"GROK_TIMEOUT"');
+    expect(response.body).not.toContain('"code":"CODEX_TIMEOUT"');
+  });
+
   it("treats stream as delivery-only for idempotent replay", async () => {
     const { app } = await testApp(successfulRunner);
     const headers = { ...authorization, "idempotency-key": "openai-response-0002" };

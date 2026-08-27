@@ -217,7 +217,7 @@ A non-streaming request waits for the durable inference job to reach a terminal 
 }
 ```
 
-`usage` is `null` because the current Codex App Server adapter does not provide verified token accounting. The Gateway MUST NOT estimate or fabricate token counts. `temperature` and `top_p` are also `null` because this interface does not expose sampling controls. `store: false` means there is no OpenAI-compatible response retrieval API; the underlying encrypted job remains subject to Gateway retention.
+`usage` is `null` because none of the inference adapters provide verified token accounting. The Gateway MUST NOT estimate or fabricate token counts. `temperature` and `top_p` are also `null` because this interface does not expose sampling controls. `store: false` means there is no OpenAI-compatible response retrieval API; the underlying encrypted job remains subject to Gateway retention.
 
 The `resp_` and `msg_` identifiers are opaque, Gateway-generated compatibility identifiers. They MUST be stable for an idempotent replay and MUST NOT expose Codex thread IDs, turn IDs, or raw Gateway database values. The first implementation derives distinct response and message suffixes from the internal job identifier through the existing keyed digest.
 
@@ -280,13 +280,13 @@ Clients MUST branch primarily on HTTP status and `error.code`; message text is n
 | `400` | `invalid_request_error` | `INVALID_REQUEST` |
 | `401` | `authentication_error` | `AUTH_REQUIRED` |
 | `404` | `invalid_request_error` | `NOT_FOUND` |
-| `409` | `invalid_request_error` | `IDEMPOTENCY_CONFLICT`, cancellation conflict |
+| `409` | `invalid_request_error` | `IDEMPOTENCY_CONFLICT`; client disconnect or cancellation (`CODEX_EXECUTION_FAILED`) |
 | `429` | `rate_limit_error` | `QUEUE_FULL`, `CODEX_RATE_LIMITED`, `CLAUDE_RATE_LIMITED`, `GROK_RATE_LIMITED`, `CURSOR_RATE_LIMITED` |
-| `502` | `api_error` | `CODEX_EXECUTION_FAILED`, `CODEX_OVERLOADED` |
-| `503` | `api_error` | `CODEX_UNAUTHORIZED`, `CODEX_UNSUPPORTED_VERSION`, dependency not ready |
-| `504` | `api_error` | Codex or compatibility wait timeout |
+| `502` | `api_error` | `CODEX_EXECUTION_FAILED`, `CLAUDE_EXECUTION_FAILED`, `GROK_EXECUTION_FAILED`, `CURSOR_EXECUTION_FAILED` |
+| `503` | `api_error` | `CODEX_UNAUTHORIZED`, `CODEX_UNSUPPORTED_VERSION`, `CODEX_OVERLOADED`, `CLAUDE_UNAUTHORIZED`, `GROK_UNAUTHORIZED`, `CURSOR_UNAUTHORIZED` |
+| `504` | `api_error` | `CODEX_TIMEOUT`, `CLAUDE_TIMEOUT`, `GROK_TIMEOUT`, `CURSOR_TIMEOUT` |
 
-The compatibility envelope intentionally omits the `/v2` `retryable` property. HTTP status and stable code carry retry semantics for OpenAI-compatible clients.
+The compatibility envelope intentionally omits the `/v2` `retryable` property. HTTP status and stable code carry retry semantics for OpenAI-compatible clients. The wait deadline uses the configured inference provider's timeout code. Client disconnect and cancellation on this facade still report `CODEX_EXECUTION_FAILED`.
 
 ## Lifecycle and limits
 
@@ -364,9 +364,9 @@ Before the interface is enabled for untrusted prompts, verification MUST demonst
 - invoke shell, network, MCP, or approval-requiring operations;
 - cause raw local paths or internal protocol data to appear in output.
 
-The current read-only sandbox prevents mutation but is not proof of readable-root isolation. An opt-in Lima executor exists and fail-closes readiness unless the guest tool-isolation probe passes; the default LaunchAgent still runs Codex on the host, and the live acceptance suite in [Readable-root isolation](READABLE_ROOT_ISOLATION.md) is not complete. The compatibility interface remains limited to explicitly enabled, trusted local clients and trusted input. It MUST NOT be exposed to untrusted users or prompts.
+The current read-only sandbox prevents mutation but is not proof of readable-root isolation. An opt-in Lima executor wraps Codex App Server only and fail-closes readiness unless the guest tool-isolation probe passes; Claude, Grok, and Cursor inference stay on the host. The default LaunchAgent still runs Codex on the host, and the live acceptance suite in [Readable-root isolation](READABLE_ROOT_ISOLATION.md) is not complete. The compatibility interface remains limited to explicitly enabled, trusted local clients and trusted input. It MUST NOT be exposed to untrusted users or prompts.
 
-This project does not claim that a ChatGPT/Codex subscription is contractually interchangeable with OpenAI Platform API usage. Operators are responsible for applicable account terms and MUST NOT use this single-owner interface for resale, account pooling, or an untrusted public service.
+This project does not claim that a ChatGPT/Codex, Claude, Grok, or Cursor subscription is contractually interchangeable with OpenAI Platform API usage. Operators are responsible for applicable account terms and MUST NOT use this single-owner interface for resale, account pooling, or an untrusted public service.
 
 ## Acceptance criteria
 

@@ -2,7 +2,7 @@
 
 ## Status
 
-Operator choices for the first VM milestone are recorded below. An opt-in Lima executor copies one repository snapshot into a dedicated guest and starts Codex App Server over `limactl shell` stdio. The default executor remains the host process so the existing LaunchAgent is unchanged.
+Operator choices for the first VM milestone are recorded below. An opt-in Lima executor copies one workspace snapshot into a dedicated guest and starts Codex App Server over `limactl shell` stdio. That covers coding repositories and Codex-backed inference directories. Claude, Grok, and Cursor inference stay on the host. The default executor remains the host process so the existing LaunchAgent is unchanged.
 
 This milestone isolates host and Gateway assets from the Codex process. It is not a completed confidentiality boundary:
 

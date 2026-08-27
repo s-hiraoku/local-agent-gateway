@@ -8,6 +8,7 @@ V2 currently protects a private, single-owner Gateway used by trusted external a
 
 - Gateway bearer token and data-encryption key;
 - ChatGPT/Codex authentication state;
+- Claude CLI login state, Grok `~/.grok/auth.json`, and the server-side Cursor API key;
 - future OpenAI Platform API keys;
 - local repository contents and host files;
 - prompt, result, and event content stored by the Gateway;
@@ -18,11 +19,12 @@ V2 currently protects a private, single-owner Gateway used by trusted external a
 - clients select opaque repository IDs, never paths;
 - public APIs expose Gateway conversation/job/event IDs only;
 - App Server uses private stdio, fixed methods, `approvalPolicy: never`, and read-only sandboxing;
-- child environment variables use an allowlist, excluding Gateway and OpenAI secrets;
+- inference Claude/Grok CLIs run with filesystem, shell, and network tools disabled; Cursor runs with built-in tools disabled;
+- child environment variables use an allowlist, excluding Gateway, OpenAI, XAI, and Cursor secrets;
 - a dedicated `CODEX_HOME` prevents accidental inheritance of the owner's normal MCP configuration;
 - prompts, results, and event data are authenticated-encrypted at rest with a versioned key id; a stored sentinel refuses startup when the configured key cannot decrypt;
 - idempotency and bounded resources reduce accidental or deliberate quota exhaustion;
-- App Server requests for approval or interactive tools are rejected.
+- App Server requests for approval or interactive tools are rejected;
 - OpenAI compatibility is disabled by default, loopback-only when enabled, authenticated with the Gateway token, and restricted to a server-fixed model alias and text fields.
 
 ## Critical unresolved boundary
@@ -35,7 +37,7 @@ Output filtering is not an acceptable substitute because secrets can be transfor
 
 The optional Responses compatibility interface increases the value of a stolen Gateway token because it grants subscription-backed inference without requiring clients to use the `/v2` job API. Requests still run as durable inference jobs. The interface remains inside the same trusted-owner boundary: enabling it for untrusted clients or prompts is prohibited until readable-root isolation is implemented and verified.
 
-The selected target is an opt-in Lima VM with a per-job read-only snapshot, a PATH-prefixed `bwrap` hide of guest `CODEX_HOME`, and hostname-resolved TCP 443. Required denial tests are specified in [Readable-root isolation design](READABLE_ROOT_ISOLATION.md). That adapter is not the default LaunchAgent path. Live proof that a real Codex tool subprocess takes the wrapper path is still required.
+The selected target is an opt-in Lima VM with a per-job read-only snapshot, a PATH-prefixed `bwrap` hide of guest `CODEX_HOME`, and hostname-resolved TCP 443. Lima wraps Codex App Server only (coding turns and Codex-backed inference). Claude, Grok, and Cursor inference remain on the host. Required denial tests are specified in [Readable-root isolation design](READABLE_ROOT_ISOLATION.md). That adapter is not the default LaunchAgent path. Live proof that a real Codex tool subprocess takes the wrapper path is still required.
 
 ## Trust expansion rules
 

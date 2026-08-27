@@ -2,7 +2,8 @@
 
 This deployment is for one trusted owner on one Mac. It binds only to
 `127.0.0.1`, keeps bearer authentication enabled, and runs coding turns with
-the Gateway's read-only Codex policy. It is not a confidentiality boundary for
+the Gateway's read-only Codex policy. Inference uses the installed provider
+and is not isolated by Lima. It is not a confidentiality boundary for
 untrusted prompts or repositories.
 
 For the untrusted-input boundary, see [Readable-root isolation design](READABLE_ROOT_ISOLATION.md). Installing the LaunchAgent does not enable Lima; the resident service stays on the host executor until that path is wired and the acceptance suite is recorded.
