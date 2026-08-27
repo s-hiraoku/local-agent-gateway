@@ -53,7 +53,7 @@ Different conversations may run concurrently. Turns within one conversation are 
 
 `inference.turn` is submitted through `POST /v2/inference/runs`. It takes no `repositoryId`; extra body fields such as `repositoryId` are ignored rather than honored. The Gateway creates a private conversation with a null repository, claims the job, and runs it against a single-use empty directory under `CODEXGW_INFERENCE_WORKSPACE_ROOT`. Claude, Grok, and Cursor always execute on the host. When the inference provider is Codex and Lima is enabled, that empty directory is snapshotted into the guest the same way a coding workspace is. Inference conversations cannot receive later `/v2/conversations/:id/turns`; that route 404s when `repositoryId` is null.
 
-`GET /v2/capabilities` advertises both job kinds as enabled, read-only, and structured-output capable. It does not name the active inference provider. The optional `/v1/models` alias does, because `grok-subscription` and `cursor-subscription` are distinct from `codex-subscription`.
+`GET /v2/capabilities` advertises both job kinds as enabled, read-only, and structured-output capable. It does not name the active inference provider. The optional `/v1/models` alias distinguishes Grok (`grok-subscription`) and Cursor (`cursor-subscription`) from Codex and Claude, which share `codex-subscription` and cannot be told apart through that route.
 
 Optional structured output is a Gateway contract, not raw backend passthrough: the schema subset is limited locally, then forwarded to Codex, Claude, or Grok, or appended to the Cursor prompt. The Gateway independently validates exact final JSON before completing the job.
 
