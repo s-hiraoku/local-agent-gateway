@@ -2,7 +2,7 @@
 
 Local Agent Gateway V2 is a clean rewrite for connecting trusted external applications to local AI capabilities without exposing backend protocols or credentials.
 
-The current vertical slice implements subscription-backed, read-only coding and repository-free structured inference through Codex App Server. Image and audio operations remain planned OpenAI Platform API adapters; they are not implemented by the current server.
+The current vertical slice implements subscription-backed, read-only coding through Codex App Server, and repository-free structured inference through the configured provider (Codex, Claude Code, Grok Build, or Cursor SDK). Image and audio operations remain planned OpenAI Platform API adapters; they are not implemented by the current server.
 
 ## Documents
 
@@ -36,4 +36,4 @@ GET  /v1/models
 POST /v1/responses
 ```
 
-OpenAPI documentation is served from `/docs` by a running Gateway.
+OpenAPI documentation is served from `/docs` by a running Gateway. `GET /v2/capabilities` lists the two enabled job kinds; it does not name the active inference provider.

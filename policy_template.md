@@ -7,7 +7,7 @@ This repository is security-sensitive local infrastructure.
 - Public APIs accept Gateway IDs and strict capability schemas, never raw paths or backend payloads.
 - Do not expose Codex App Server JSON-RPC, thread/turn IDs, stderr, command lines, local absolute paths, or upstream credentials.
 - Never add an arbitrary shell endpoint, generic OpenAI proxy, raw filesystem endpoint, or `danger-full-access` mode.
-- Do not accept ChatGPT tokens or OpenAI API keys in public request bodies.
+- Do not accept ChatGPT tokens, OpenAI API keys, XAI API keys, or Cursor API keys in public request bodies.
 
 ## Current coding policy
 
@@ -16,9 +16,15 @@ This repository is security-sensitive local infrastructure.
 - App Server starts per job with a dedicated `CODEX_HOME` and environment allowlist.
 - Prompts, results, and event payloads remain encrypted at rest and absent from logs.
 - Queue, concurrency, protocol, event, result, stderr, and time limits must remain bounded.
-- Idempotent API submission and at-least-once Codex execution are distinct guarantees.
+- Idempotent API submission and at-least-once read-only execution are distinct guarantees.
 
-Read-only is not a confidentiality boundary. An opt-in Lima executor can keep host and Gateway files out of the Codex VM and fail-closes readiness unless the guest tool-isolation probe passes. The default LaunchAgent still runs on the host. Do not represent the service as production-ready for untrusted prompts or repositories until the readable-root isolation gate in `docs/THREAT_MODEL.md` is verified.
+Read-only is not a confidentiality boundary. An opt-in Lima executor can keep host and Gateway files out of the Codex VM (coding turns and Codex-backed inference) and fail-closes readiness unless the guest tool-isolation probe passes. Claude, Grok, and Cursor inference stay on the host. The default LaunchAgent still runs on the host. Do not represent the service as production-ready for untrusted prompts or repositories until the readable-root isolation gate in `docs/THREAT_MODEL.md` is verified.
+
+## Current inference policy
+
+- Inference takes no client `repositoryId` and runs against a Gateway-owned empty directory.
+- Claude and Grok run headless with filesystem, shell, and network tools disabled. Cursor runs `@cursor/sdk` with built-in tools disabled.
+- Do not accept Claude, Grok, XAI, or Cursor credentials in public request bodies.
 
 ## Future capabilities
 

@@ -20,7 +20,7 @@ Implemented:
 - reconnectable Server-Sent Events;
 - authenticated, restart-durable operational metrics;
 - opt-in, loopback-only OpenAI Responses compatibility for trusted text clients;
-- one isolated App Server process per job with an environment allowlist;
+- one isolated App Server process per Codex job with an environment allowlist;
 - graceful cancellation and shutdown;
 - OpenAPI documentation at `/docs`.
 
@@ -48,7 +48,7 @@ Clients authenticate only to the Gateway. They never name a working directory, C
 
 `GET /readyz` always probes Codex (supported CLI version and ChatGPT login), and also probes the selected inference backend when it is not Codex. Authentication of Claude, Grok, or Cursor is not probed on every poll, because that would consume subscription usage; a missing login or key fails on the first real turn.
 
-Cursor here is `@cursor/sdk` billed against the owner's Cursor plan. Pointing the Cursor IDE at this Gateway as a custom OpenAI provider is not implemented. Lima isolation wraps the Codex App Server runner (coding always; inference only when the provider is Codex) and remains opt-in.
+Cursor here is `@cursor/sdk` billed against the owner's Cursor plan. Pointing the Cursor IDE at this Gateway as a custom OpenAI provider is not implemented. Lima isolation wraps Codex App Server only (coding turns and Codex-backed inference) and remains opt-in; Claude, Grok, and Cursor inference stay on the host.
 
 Clients never talk to App Server. How the Gateway starts it, authenticates `CODEX_HOME`, and maps turns is in [Codex App Server](docs/CODEX_APP_SERVER.md).
 
@@ -187,7 +187,7 @@ curl -X POST http://127.0.0.1:8787/v2/inference/runs \
   }'
 ```
 
-Inference jobs poll and read `structuredOutput` exactly like coding runs (`kind` is `inference.turn`, `repositoryId` is `null`).
+Inference jobs poll and read `structuredOutput` exactly like coding runs (`kind` is `inference.turn`, `repositoryId` is `null`). Extra body fields such as `repositoryId` are ignored. Codex, Claude, and Grok receive `outputSchema` natively; Cursor appends it to the prompt. The Gateway still validates exact JSON locally.
 
 Inference turns can run on Claude Code, Grok Build, or the Cursor SDK instead of Codex. Coding turns are
 unaffected and always run on Codex, because repository sandboxing is
@@ -286,15 +286,15 @@ curl -H "Authorization: Bearer $CODEXGW_API_TOKEN" \
   'http://127.0.0.1:8787/v2/metrics?windowHours=24'
 ```
 
-It reports job counts by status and by kind, queue depth and the oldest queued job's age, the number of retried jobs (a Codex-flakiness signal), and — over a window (default 24h, 1–168) — failures grouped by error code, rate-limit hits by backend (`codex` / `claude` / `grok` / `cursor`), and completed-job duration percentiles (p50/p95). `retention.lastRunAt` and `retention.lastPruned` report the latest successful retention sweep across restarts; before any sweep completes they are `null` and zero counts. The percentile query is backed by a `(status, completedAt)` index. `windowHours` bounds both the query cost and the freshness of the latency figures.
+It reports job counts by status and by kind, queue depth and the oldest queued job's age, the number of retried jobs (an at-least-once / backend-flakiness signal), and — over a window (default 24h, 1–168) — failures grouped by error code, rate-limit hits by backend (`codex` / `claude` / `grok` / `cursor`), and completed-job duration percentiles (p50/p95). `retention.lastRunAt` and `retention.lastPruned` report the latest successful retention sweep across restarts; before any sweep completes they are `null` and zero counts. The percentile query is backed by a `(status, completedAt)` index. `windowHours` bounds both the query cost and the freshness of the latency figures.
 
 ## Security boundary
 
-Gateway credentials and backend credentials are separate. Clients submit only Gateway bearer tokens. App Server inherits a small environment allowlist and a dedicated `CODEX_HOME`; OpenAI API keys are not accepted by public request bodies.
+Gateway credentials and backend credentials are separate. Clients submit only Gateway bearer tokens. App Server inherits a small environment allowlist and a dedicated `CODEX_HOME`. Public request bodies do not accept OpenAI, XAI, or Cursor API keys.
 
 The optional `/v1` compatibility routes use the same Gateway bearer token. They do not expose OAuth endpoints or OAuth tokens, and cannot be enabled on a non-loopback bind address.
 
-`read-only` prevents writes and, with `approvalPolicy: never`, rejects interactive escalation. It is not by itself proof that Codex cannot read host files outside the repository. An opt-in Lima executor (`CODEXGW_CODEX_EXECUTOR=lima`) copies one repository snapshot into a dedicated VM and fail-closes `/readyz` unless the guest tool-isolation probe passes. The default LaunchAgent still runs Codex on the host. Until the acceptance tests in [Readable-root isolation](docs/READABLE_ROOT_ISOLATION.md) pass, run this only as a dedicated local service account against trusted repositories and trusted client applications. Do not expose the port directly to the public internet.
+`read-only` prevents writes and, with `approvalPolicy: never`, rejects interactive escalation. It is not by itself proof that Codex cannot read host files outside the repository. An opt-in Lima executor (`CODEXGW_CODEX_EXECUTOR=lima`) copies one Codex workspace snapshot into a dedicated VM for App Server jobs (coding repositories and Codex-backed inference directories) and fail-closes `/readyz` unless the guest tool-isolation probe passes. Claude, Grok, and Cursor inference stay on the host. The default LaunchAgent still runs Codex on the host. Until the acceptance tests in [Readable-root isolation](docs/READABLE_ROOT_ISOLATION.md) pass, run this only as a dedicated local service account against trusted repositories and trusted client applications. Do not expose the port directly to the public internet.
 
 ## Documentation
 

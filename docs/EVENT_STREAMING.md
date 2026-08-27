@@ -17,6 +17,8 @@ Current event types:
 - `job.failed`
 - `job.cancelled`
 
+`agent.message.delta` is produced by Codex App Server during a turn. Claude, Grok, and Cursor inference complete without token deltas; those jobs still emit the lifecycle events. Compatibility SSE on `/v1/responses` therefore has zero `response.output_text.delta` frames for those backends, then the full text on `response.output_text.done`.
+
 Event sequence numbers increase monotonically per job and are persisted before delivery. To resume after disconnect:
 
 ```bash
