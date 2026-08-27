@@ -24,6 +24,8 @@ chmod 700 "$HOME/.codex-gateway"
 CODEX_HOME="$HOME/.codex-gateway" codex login
 ```
 
+The Gateway starts `codex app-server` itself. Operators do not expose that process or its JSON-RPC to clients. See [Codex App Server](CODEX_APP_SERVER.md).
+
 Install the default `reviews` scratch workspace:
 
 ```bash

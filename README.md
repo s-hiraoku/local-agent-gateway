@@ -48,7 +48,9 @@ Clients authenticate only to the Gateway. They never name a working directory, C
 
 `GET /readyz` always probes Codex (supported CLI version and ChatGPT login), and also probes the selected inference backend when it is not Codex. Authentication of Claude, Grok, or Cursor is not probed on every poll, because that would consume subscription usage; a missing login or key fails on the first real turn.
 
-Cursor here is `@cursor/sdk` billed against the owner's Cursor plan. Pointing the Cursor IDE at this Gateway as a custom OpenAI provider is not implemented. Lima isolation is Codex coding only and remains opt-in.
+Cursor here is `@cursor/sdk` billed against the owner's Cursor plan. Pointing the Cursor IDE at this Gateway as a custom OpenAI provider is not implemented. Lima isolation wraps the Codex App Server runner (coding always; inference only when the provider is Codex) and remains opt-in.
+
+Clients never talk to App Server. How the Gateway starts it, authenticates `CODEX_HOME`, and maps turns is in [Codex App Server](docs/CODEX_APP_SERVER.md).
 
 ## Requirements
 
@@ -297,6 +299,7 @@ The optional `/v1` compatibility routes use the same Gateway bearer token. They 
 ## Documentation
 
 - [Architecture](docs/ARCHITECTURE.md): product boundary, capability adapters, and delivery sequence
+- [Codex App Server](docs/CODEX_APP_SERVER.md): operator login, when App Server runs, and the private adapter contract
 - [Threat model](docs/THREAT_MODEL.md): trusted parties, protected assets, and security invariants
 - [Readable-root isolation](docs/READABLE_ROOT_ISOLATION.md): Lima executor decisions and acceptance tests
 - [Client integration](docs/CLIENT_INTEGRATION.md): V2 API workflow and retry contract
