@@ -57,7 +57,7 @@ function booleanFlag(value: string | undefined, fallback: boolean, name: string)
   throw new GatewayError("INVALID_REQUEST", `${name} must be true or false`, 500);
 }
 
-function isLoopbackHost(host: string): boolean {
+export function isLoopbackHost(host: string): boolean {
   return host === "127.0.0.1" || host === "::1" || host === "localhost";
 }
 
