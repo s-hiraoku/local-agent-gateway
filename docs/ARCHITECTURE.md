@@ -55,6 +55,8 @@ Different conversations may run concurrently. Turns within one conversation are 
 
 `GET /v2/capabilities` advertises both job kinds as enabled, read-only, and structured-output capable. It does not name the active inference provider. The optional `/v1/models` alias distinguishes Grok (`grok-subscription`) and Cursor (`cursor-subscription`) from Codex and Claude, which share `codex-subscription` and cannot be told apart through that route.
 
+`src/mcp/stdio.ts` is a separate stdio process for MCP clients. It calls `POST /v2/inference/runs` and `GET /v2/jobs/:id` with the owner bearer token and refuses any non-loopback origin. It is not a Gateway HTTP route, and it has no coding, shell, or working-directory tool. Cursor IDE as a custom OpenAI provider is unchanged and still unimplemented.
+
 Optional structured output is a Gateway contract, not raw backend passthrough: the schema subset is limited locally, then forwarded to Codex, Claude, or Grok, or appended to the Cursor prompt. The Gateway independently validates exact final JSON before completing the job.
 
 At-least-once recovery is intentional for read-only jobs: an interrupted attempt is marked failed and the job is requeued. This may consume subscription work twice. Write mode must use a different recovery contract.
@@ -111,6 +113,7 @@ Generated binary media will not be stored as SQLite blobs. A future artifact lay
 - no client-supplied ChatGPT token, OpenAI API key, XAI API key, Cursor API key, or refresh token;
 - no full prompt in logs or plaintext persistence;
 - no personal MCP/config inheritance by default;
+- the inference MCP adapter binds no socket and calls only inference routes on a loopback origin;
 - no unbounded queues, output, events, stderr, or protocol waits;
 - no write mode without task-specific workspace isolation;
 - no capability without positive and negative authorization tests.
