@@ -21,6 +21,7 @@
     "lint": "oxlint src tests scripts",
     "test": "vitest run --maxWorkers=4",
     "smoke": "tsx scripts/smoke.ts",
+    "mcp": "tsx src/mcp/stdio.ts",
     "verify": "node --run lint && node --run typecheck && node --run test && node --run build"
   },
   "dependencies": {

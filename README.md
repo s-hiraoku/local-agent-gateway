@@ -22,7 +22,8 @@ Implemented:
 - opt-in, loopback-only OpenAI Responses compatibility for trusted text clients;
 - one isolated App Server process per Codex job with an environment allowlist;
 - graceful cancellation and shutdown;
-- OpenAPI documentation at `/docs`.
+- OpenAPI documentation at `/docs`;
+- a local stdio MCP adapter that starts inference runs through `POST /v2/inference/runs`.
 
 Not implemented yet:
 
@@ -212,6 +213,48 @@ would consume subscription usage. An unauthenticated backend fails on the
 first real turn (`CLAUDE_UNAUTHORIZED`, `GROK_UNAUTHORIZED`, or
 `CURSOR_UNAUTHORIZED`).
 
+## MCP inference adapter
+
+Cursor, Grok, and other MCP clients can start an inference run without a new HTTP listener. The adapter is `src/mcp/stdio.ts`. It speaks MCP over stdio and calls the existing inference routes. Coding turns stay on Codex and are not exposed as tools. Cursor IDE as a custom OpenAI provider is still not implemented.
+
+Start the Gateway on loopback with Claude selected for inference:
+
+```bash
+export CODEXGW_API_TOKEN="$(openssl rand -base64 32)"
+export CODEXGW_DATA_ENCRYPTION_KEY="$(openssl rand -base64 32)"
+export CODEXGW_REPOSITORIES_JSON='[]'
+export CODEXGW_HOST=127.0.0.1
+export CODEXGW_INFERENCE_PROVIDER=claude
+pnpm dev
+```
+
+Build the adapter, then point Cursor at the built file. `pnpm mcp` is the same process for a terminal check. Use the `node` command in `mcp.json` so the process writes only MCP frames to stdout.
+
+```bash
+pnpm build
+```
+
+```json
+{
+  "mcpServers": {
+    "local-agent-gateway": {
+      "command": "node",
+      "args": ["/absolute/path/to/local-agent-gateway/dist/mcp/stdio.js"],
+      "env": {
+        "CODEXGW_API_TOKEN": "<the same CODEXGW_API_TOKEN the Gateway process uses>",
+        "CODEXGW_BASE_URL": "http://127.0.0.1:8787"
+      }
+    }
+  }
+}
+```
+
+The stdio process reads `CODEXGW_API_TOKEN` from that `env` block and sends `Authorization: Bearer <token>` on each request to `CODEXGW_BASE_URL`. Keep the token out of git. The adapter exits before any request unless `CODEXGW_BASE_URL` uses `http` or `https`, the host is `127.0.0.1`, `::1`, or `localhost`, and the URL has no userinfo, path, query, or fragment. Redirect responses are refused.
+
+In the Cursor agent, call the tool `run_inference` with a prompt. Optional arguments are `outputSchema` and `idempotencyKey`. An idempotency key is 8 to 128 characters from `A-Z`, `a-z`, `0-9`, `.`, `_`, `:`, and `-`. The tool posts to `POST /v2/inference/runs`, then polls `GET /v2/jobs/:jobId` until the job is terminal. A finished tool result is the public job JSON, with `kind` `inference.turn` and `repositoryId` `null`. The default wait is 120000 ms and the default poll interval is 500 ms. Override them with `CODEXGW_MCP_TIMEOUT_MS` and `CODEXGW_MCP_POLL_INTERVAL_MS`. After `INFERENCE_TIMEOUT`, call `get_inference_job` with the returned job id.
+
+`pnpm test tests/mcp-inference.test.ts` runs this path against a local fake Gateway. It checks the bearer header, the inference URL, loopback rejection, and that private fields such as `cwd` are not returned. A live Claude result also requires `claude auth login` on the Gateway host. The adapter cannot select the provider. Only `CODEXGW_INFERENCE_PROVIDER` on the Gateway process does.
+
 For trusted OpenAI SDK clients on the same host, the optional compatibility surface exposes `GET /v1/models` and `POST /v1/responses`. Enable it only while binding to loopback:
 
 ```bash
@@ -293,6 +336,8 @@ It reports job counts by status and by kind, queue depth and the oldest queued j
 Gateway credentials and backend credentials are separate. Clients submit only Gateway bearer tokens. App Server inherits a small environment allowlist and a dedicated `CODEX_HOME`. Public request bodies do not accept OpenAI, XAI, or Cursor API keys.
 
 The optional `/v1` compatibility routes use the same Gateway bearer token. They do not expose OAuth endpoints or OAuth tokens, and cannot be enabled on a non-loopback bind address.
+
+The MCP adapter uses that same bearer token and the same loopback host check, `127.0.0.1`, `::1`, or `localhost`. It opens no port. Put the Gateway token in the `mcp.json` `env` block on the local machine, not in a shell argument or the MCP command line. Process listings can show command lines.
 
 `read-only` prevents writes and, with `approvalPolicy: never`, rejects interactive escalation. It is not by itself proof that Codex cannot read host files outside the repository. An opt-in Lima executor (`CODEXGW_CODEX_EXECUTOR=lima`) copies one Codex workspace snapshot into a dedicated VM for App Server jobs (coding repositories and Codex-backed inference directories) and fail-closes `/readyz` unless the guest tool-isolation probe passes. Claude, Grok, and Cursor inference stay on the host. The default LaunchAgent still runs Codex on the host. Until the acceptance tests in [Readable-root isolation](docs/READABLE_ROOT_ISOLATION.md) pass, run this only as a dedicated local service account against trusted repositories and trusted client applications. Do not expose the port directly to the public internet.
 

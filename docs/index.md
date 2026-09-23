@@ -37,3 +37,5 @@ POST /v1/responses
 ```
 
 OpenAPI documentation is served from `/docs` by a running Gateway. `GET /v2/capabilities` lists the two enabled job kinds; it does not name the active inference provider.
+
+A local stdio MCP adapter (`src/mcp/stdio.ts`) calls `POST /v2/inference/runs` and `GET /v2/jobs/:id` with the owner bearer token. It is not an HTTP route. The procedure and Cursor `mcp.json` example are in the README section "MCP inference adapter".

@@ -29,6 +29,10 @@ Every `/v2` request requires:
 Authorization: Bearer <gateway owner token>
 ```
 
+## MCP inference adapter
+
+Local MCP clients use the stdio adapter documented in the README section "MCP inference adapter". The adapter sends the same bearer token to `POST /v2/inference/runs` and `GET /v2/jobs/:id` on a loopback origin. It does not add a Gateway listen port, a coding tool, or a working-directory argument. Set `CODEXGW_INFERENCE_PROVIDER=claude` on the Gateway process to run those inference jobs through Claude Code.
+
 ## Submission guarantees
 
 Turn submission is idempotent within the owner boundary:
